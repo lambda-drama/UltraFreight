@@ -8,18 +8,60 @@ app_license = "mit"
 # Apps
 # ------------------
 
-# required_apps = []
+required_apps = ["erpnext"]
+
+fixtures = [
+	{
+		"doctype": "Custom Field",
+		"filters": [
+			[
+				"name",
+				"in",
+				(
+					"Sales Order-transport_dispatch_section",
+					"Sales Order-require_direct_delivery",
+					"Sales Order-transport_customer",
+					"Sales Order-transport_customer_name",
+					"Sales Order-transport_phone",
+					"Sales Order-transport_email",
+					"Sales Order-transport_address",
+					"Sales Order-transport_column_break",
+					"Sales Order-driver",
+					"Sales Order-expected_delivery_date",
+					"Sales Order-transport_charge",
+					"Delivery Note-transport_dispatch_section",
+					"Delivery Note-require_direct_delivery",
+					"Delivery Note-transport_customer",
+					"Delivery Note-transport_customer_name",
+					"Delivery Note-transport_phone",
+					"Delivery Note-transport_email",
+					"Delivery Note-transport_address",
+					"Delivery Note-transport_status_column",
+					"Delivery Note-delivery_status",
+					"Delivery Note-otp",
+					"Delivery Note-otp_generated_at",
+					"Delivery Note-otp_expires_at",
+					"Delivery Note-confirmation_log",
+					"Delivery Note-transport_sales_invoice",
+					"Driver-transport_dispatch_section",
+					"Driver-unique_key",
+					"Driver-vehicle_number",
+					"Driver-transport_company",
+				),
+			]
+		],
+	},
+]
 
 # Each item in the list will be shown as an app in the apps page
-# add_to_apps_screen = [
-# 	{
-# 		"name": "ultrafreight",
-# 		"logo": "/assets/ultrafreight/logo.png",
-# 		"title": "Ultra Freight",
-# 		"route": "/ultrafreight",
-# 		"has_permission": "ultrafreight.api.permission.has_app_permission"
-# 	}
-# ]
+add_to_apps_screen = [
+	{
+		"name": "ultrafreight",
+		"title": "Ultra Freight",
+		"route": "/desk/ultra-dispatch",
+		"has_permission": "ultrafreight.ultra_freight.api.permission.has_app_permission",
+	}
+]
 
 # Includes in <head>
 # ------------------
@@ -43,7 +85,10 @@ app_license = "mit"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
+doctype_js = {
+	"Sales Order": "public/js/sales_order.js",
+	"Delivery Note": "public/js/delivery_note.js",
+}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -132,13 +177,13 @@ app_license = "mit"
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	"Driver": {
+		"before_insert": "ultrafreight.ultra_freight.custom.driver_hooks.ensure_driver_unique_key",
+		"before_save": "ultrafreight.ultra_freight.custom.driver_hooks.ensure_driver_unique_key",
+		"validate": "ultrafreight.ultra_freight.custom.driver_hooks.validate_driver",
+	},
+}
 
 # Scheduled Tasks
 # ---------------
@@ -170,9 +215,10 @@ app_license = "mit"
 # ------------------------------
 #
 # Specify custom mixins to extend the standard doctype controller.
-# extend_doctype_class = {
-# 	"Task": "ultrafreight.custom.task.CustomTaskMixin"
-# }
+override_doctype_class = {
+	"Sales Order": "ultrafreight.ultra_freight.overrides.sales_order.UltraFreightSalesOrder",
+	"Delivery Note": "ultrafreight.ultra_freight.overrides.delivery_note.UltraFreightDeliveryNote",
+}
 
 # Overriding Methods
 # ------------------------------

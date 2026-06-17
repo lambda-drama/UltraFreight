@@ -1,0 +1,160 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-06-17 19:21:33.028801",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "otp_section",
+  "otp_expiry_minutes",
+  "column_break_otp",
+  "driver_portal_url",
+  "company_section",
+  "ultra_transport_company",
+  "ultra_transport_email",
+  "default_transport_item",
+  "default_sales_taxes_template",
+  "default_transport_charges",
+  "column_break_company",
+  "default_country_code",
+  "sms_section",
+  "enable_sms",
+  "sms_provider",
+  "sms_sender_id",
+  "column_break_sms",
+  "sms_api_key",
+  "sms_api_url"
+ ],
+ "fields": [
+  {
+   "fieldname": "otp_section",
+   "fieldtype": "Section Break",
+   "label": "OTP Settings"
+  },
+  {
+   "default": "60",
+   "fieldname": "otp_expiry_minutes",
+   "fieldtype": "Int",
+   "label": "OTP Expiry Minutes",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "column_break_otp",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "/driver-confirmation",
+   "description": "Public URL path for driver delivery confirmation",
+   "fieldname": "driver_portal_url",
+   "fieldtype": "Data",
+   "label": "Driver Portal URL"
+  },
+  {
+   "fieldname": "company_section",
+   "fieldtype": "Section Break",
+   "label": "Company & Billing"
+  },
+  {
+   "fieldname": "ultra_transport_company",
+   "fieldtype": "Link",
+   "label": "Ultra Transport Company",
+   "options": "Company"
+  },
+  {
+   "fieldname": "ultra_transport_email",
+   "fieldtype": "Data",
+   "label": "Ultra Transport Contact Email",
+   "options": "Email"
+  },
+  {
+   "fieldname": "default_transport_item",
+   "fieldtype": "Link",
+   "label": "Default Transport Service Item",
+   "options": "Item"
+  },
+  {
+   "fieldname": "default_sales_taxes_template",
+   "fieldtype": "Link",
+   "label": "Default Sales Taxes Template",
+   "options": "Sales Taxes and Charges Template"
+  },
+  {
+   "fieldname": "default_transport_charges",
+   "fieldtype": "Currency",
+   "label": "Default Transport Charges",
+   "insert_after": "default_sales_taxes_template"
+  },
+  {
+   "fieldname": "column_break_company",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "+254",
+   "fieldname": "default_country_code",
+   "fieldtype": "Data",
+   "label": "Default Country Code"
+  },
+  {
+   "fieldname": "sms_section",
+   "fieldtype": "Section Break",
+   "label": "SMS Settings"
+  },
+  {
+   "default": "1",
+   "fieldname": "enable_sms",
+   "fieldtype": "Check",
+   "label": "Enable SMS"
+  },
+  {
+   "fieldname": "sms_provider",
+   "fieldtype": "Select",
+   "label": "SMS Provider",
+   "options": "\nFrappe SMS Settings\nAfrica's Talking\nTwilio\nOther"
+  },
+  {
+   "fieldname": "sms_sender_id",
+   "fieldtype": "Data",
+   "label": "SMS Sender ID"
+  },
+  {
+   "fieldname": "column_break_sms",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sms_api_key",
+   "fieldtype": "Password",
+   "label": "SMS API Key"
+  },
+  {
+   "fieldname": "sms_api_url",
+   "fieldtype": "Data",
+   "label": "SMS API URL"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-06-18 01:31:41.689762",
+ "modified_by": "Administrator",
+ "module": "Ultra Freight",
+ "name": "Transport Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}
