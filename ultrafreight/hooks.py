@@ -115,9 +115,6 @@ doctype_js = {
 # automatically create page for each record of this doctype
 # website_generators = ["Web Page"]
 
-# automatically load and sync documents of this doctype from downstream apps
-# importable_doctypes = [doctype_1]
-
 # Jinja
 # ----------
 
@@ -283,9 +280,6 @@ override_doctype_class = {
 # auth_hooks = [
 # 	"ultrafreight.auth.validate"
 # ]
-
-# Automatically update python controller files with type annotations for this app.
-# export_python_type_annotations = True
 
 # default_log_clearing_doctypes = {
 # 	"Logging DocType Name": 30  # days to retain logs
