@@ -57,6 +57,7 @@ fixtures = [
 add_to_apps_screen = [
 	{
 		"name": "ultrafreight",
+		"logo": "/assets/ultrafreight/image/logo.png",
 		"title": "Ultra Freight",
 		"route": "/desk/ultra-dispatch",
 		"has_permission": "ultrafreight.ultra_freight.api.permission.has_app_permission",

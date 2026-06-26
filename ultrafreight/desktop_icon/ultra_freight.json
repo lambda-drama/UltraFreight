@@ -7,6 +7,7 @@
  "icon_type": "App",
  "idx": 0,
  "label": "Ultra Freight",
+ "logo_url": "/assets/ultrafreight/image/logo.png",
  "link": "/desk/ultra-dispatch",
  "link_type": "External",
  "modified": "2026-06-17 21:00:00.000000",
