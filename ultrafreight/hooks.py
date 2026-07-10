@@ -29,6 +29,9 @@ fixtures = [
 					"Sales Order-driver",
 					"Sales Order-expected_delivery_date",
 					"Sales Order-transport_charge",
+					"Sales Order-transport_charge_order_section",
+					"Sales Order-custom_is_transport_order",
+					"Sales Order-custom_delivery_note_to_be_transported",
 					"Delivery Note-transport_dispatch_section",
 					"Delivery Note-require_direct_delivery",
 					"Delivery Note-transport_customer",
@@ -42,6 +45,8 @@ fixtures = [
 					"Delivery Note-otp_generated_at",
 					"Delivery Note-otp_expires_at",
 					"Delivery Note-confirmation_log",
+					"Delivery Note-sms_status",
+					"Delivery Note-transport_sales_order",
 					"Delivery Note-transport_sales_invoice",
 					"Driver-transport_dispatch_section",
 					"Driver-unique_key",
@@ -59,9 +64,16 @@ add_to_apps_screen = [
 		"name": "ultrafreight",
 		"logo": "/assets/ultrafreight/image/logo.png",
 		"title": "Ultra Freight",
-		"route": "/desk/ultra-dispatch",
+		"route": "/transport",
 		"has_permission": "ultrafreight.ultra_freight.api.permission.has_app_permission",
 	}
+]
+
+website_route_rules = [
+	{"from_route": "/transport", "to_route": "transport_frontend"},
+	{"from_route": "/transport/<path:app_path>", "to_route": "transport_frontend"},
+	{"from_route": "/driver", "to_route": "driver"},
+	{"from_route": "/driver/<path:app_path>", "to_route": "driver"},
 ]
 
 # Includes in <head>

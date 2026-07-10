@@ -1,0 +1,868 @@
+import frappe
+from frappe import _
+from frappe.utils import flt, now_datetime
+
+from ultrafreight.ultra_freight.utils.transport_settings import get_transport_settings
+
+
+from ultrafreight.ultra_freight.utils.delivery_status import normalize_delivery_status as _normalize_delivery_status
+from ultrafreight.ultra_freight.utils.sms_log import get_delivery_sms_logs
+
+
+def _require_login():
+	if frappe.session.user == "Guest":
+		frappe.throw(_("Login required"), frappe.AuthenticationError)
+
+
+def _transport_company():
+	settings = get_transport_settings()
+	return settings.get("ultra_transport_company")
+
+
+def _get_transport_currency() -> str:
+	company = _transport_company()
+	if company:
+		currency = frappe.db.get_value("Company", company, "default_currency")
+		if currency:
+			return currency
+	return frappe.defaults.get_global_default("currency") or "USD"
+
+
+def _transport_sales_order_filters(extra: dict | None = None) -> dict:
+	filters = {"custom_is_transport_order": 1}
+	company = _transport_company()
+	if company:
+		filters["company"] = company
+	if extra:
+		filters.update(extra)
+	return filters
+
+
+def _get_linked_delivery_notes() -> list[str]:
+	return frappe.get_all(
+		"Sales Order",
+		filters=_transport_sales_order_filters(),
+		pluck="custom_delivery_note_to_be_transported",
+	) or []
+
+
+def _dispatch_filters(extra: dict | None = None) -> dict:
+	linked_dns = [dn for dn in _get_linked_delivery_notes() if dn]
+	filters = {
+		"require_direct_delivery": 1,
+		"docstatus": 1,
+		"name": ("in", linked_dns or ["__none__"]),
+	}
+	if extra:
+		filters.update(extra)
+	return filters
+
+
+def _get_transport_sales_order(delivery_note: str) -> str | None:
+	return frappe.db.get_value(
+		"Sales Order",
+		{
+			"custom_is_transport_order": 1,
+			"custom_delivery_note_to_be_transported": delivery_note,
+			**({"company": _transport_company()} if _transport_company() else {}),
+		},
+		"name",
+	)
+
+
+def _ensure_transport_delivery_note(delivery_note: str):
+	if not frappe.db.exists("Delivery Note", delivery_note):
+		frappe.throw(_("Delivery Note not found"))
+	if delivery_note not in _get_linked_delivery_notes():
+		frappe.throw(_("This delivery note is not linked to your transport company"))
+
+
+def _ensure_transport_sales_order(sales_order: str):
+	if not frappe.db.exists("Sales Order", sales_order):
+		frappe.throw(_("Sales Order not found"))
+	values = frappe.db.get_value(
+		"Sales Order",
+		sales_order,
+		["custom_is_transport_order", "company", "docstatus"],
+		as_dict=True,
+	)
+	if not values or not values.custom_is_transport_order:
+		frappe.throw(_("This is not a transport sales order"))
+	company = _transport_company()
+	if company and values.company != company:
+		frappe.throw(_("This transport order belongs to another company"))
+
+
+def _ensure_driver_access(driver_name: str):
+	if not frappe.db.exists("Driver", driver_name):
+		frappe.throw(_("Driver not found"))
+	company = _transport_company()
+	if company and frappe.db.get_value("Driver", driver_name, "transport_company") != company:
+		frappe.throw(_("This driver belongs to another transport company"))
+
+
+@frappe.whitelist()
+def get_dashboard_stats():
+	_require_login()
+	dispatch_filters = _dispatch_filters()
+
+	dn_invoice_rows = frappe.get_all(
+		"Delivery Note",
+		filters={**dispatch_filters, "transport_sales_invoice": ("is", "set")},
+		fields=["name", "transport_sales_invoice", "transport_customer_name", "transport_customer"],
+	)
+	invoice_names = list({row.transport_sales_invoice for row in dn_invoice_rows if row.transport_sales_invoice})
+
+	transport_invoices = 0
+	total_invoiced_amount = 0
+	draft_order_amount = 0
+	submitted_order_amount = 0
+	currency = None
+	invoice_records = []
+	if invoice_names:
+		invoice_records = frappe.get_all(
+			"Sales Invoice",
+			filters={"name": ("in", invoice_names), "docstatus": 1},
+			fields=["name", "grand_total", "posting_date", "currency"],
+		)
+		transport_invoices = len(invoice_records)
+		total_invoiced_amount = sum(flt(row.grand_total) for row in invoice_records)
+		if invoice_records:
+			currency = invoice_records[0].currency
+
+	draft_orders = frappe.get_all(
+		"Sales Order",
+		filters={**_transport_sales_order_filters(), "docstatus": 0},
+		fields=["grand_total", "currency"],
+	)
+	submitted_orders = frappe.get_all(
+		"Sales Order",
+		filters={**_transport_sales_order_filters(), "docstatus": 1},
+		fields=["grand_total", "currency"],
+	)
+	draft_order_amount = sum(flt(row.grand_total) for row in draft_orders)
+	submitted_order_amount = sum(flt(row.grand_total) for row in submitted_orders)
+	if not currency and draft_orders:
+		currency = draft_orders[0].currency
+	elif not currency and submitted_orders:
+		currency = submitted_orders[0].currency
+	if not currency:
+		currency = _get_transport_currency()
+
+	invoice_amount_map = {row.name: flt(row.grand_total) for row in invoice_records}
+	customer_stats = {}
+	for dn in dn_invoice_rows:
+		customer = dn.transport_customer_name or dn.transport_customer or _("Unknown")
+		amount = invoice_amount_map.get(dn.transport_sales_invoice, 0)
+		if customer not in customer_stats:
+			customer_stats[customer] = {"customer": customer, "invoice_count": 0, "total_amount": 0}
+		customer_stats[customer]["invoice_count"] += 1
+		customer_stats[customer]["total_amount"] += amount
+
+	top_transport_customers = sorted(
+		customer_stats.values(), key=lambda row: row["total_amount"], reverse=True
+	)[:8]
+
+	monthly_invoices = _get_monthly_invoice_trend(invoice_records)
+
+	return {
+		"open_dispatches": frappe.db.count(
+			"Delivery Note", {**dispatch_filters, "delivery_status": "Open"}
+		),
+		"needs_action": len(
+			frappe.get_all(
+				"Delivery Note",
+				filters={**dispatch_filters, "delivery_status": "Open"},
+				pluck="name",
+			)
+		)
+		+ frappe.db.count("Sales Order", {**_transport_sales_order_filters(), "docstatus": 0}),
+		"pending_dispatches": frappe.db.count(
+			"Delivery Note",
+			{**dispatch_filters, "delivery_status": ("in", ["Open", "", None])},
+		),
+		"in_transit": frappe.db.count(
+			"Delivery Note", {**dispatch_filters, "delivery_status": "In Transit"}
+		),
+		"completed": frappe.db.count(
+			"Delivery Note",
+			{**dispatch_filters, "delivery_status": "Completed"},
+		),
+		"active_otps": frappe.db.count(
+			"Delivery Note",
+			{
+				**dispatch_filters,
+				"otp": ("is", "set"),
+				"otp_expires_at": (">", now_datetime()),
+				"delivery_status": "In Transit",
+			},
+		),
+		"transport_orders": frappe.db.count(
+			"Sales Order", {**_transport_sales_order_filters(), "docstatus": 0}
+		),
+		"transport_invoices": transport_invoices,
+		"drivers": frappe.db.count(
+			"Driver",
+			{"status": "Active", **({"transport_company": _transport_company()} if _transport_company() else {})},
+		),
+		"currency": currency,
+		"total_invoiced_amount": total_invoiced_amount,
+		"draft_order_amount": draft_order_amount,
+		"submitted_order_amount": submitted_order_amount,
+		"avg_invoice_amount": (total_invoiced_amount / transport_invoices) if transport_invoices else 0,
+		"top_transport_customers": top_transport_customers,
+		"monthly_invoice_trend": monthly_invoices,
+	}
+
+
+def _get_monthly_invoice_trend(invoice_records: list, months: int = 6) -> list[dict]:
+	from frappe.utils import getdate, add_months
+
+	if not invoice_records:
+		return []
+
+	today = getdate()
+	buckets = {}
+	for i in range(months - 1, -1, -1):
+		month_start = add_months(today.replace(day=1), -i)
+		key = month_start.strftime("%Y-%m")
+		buckets[key] = {"month": key, "label": month_start.strftime("%b"), "amount": 0, "count": 0}
+
+	for row in invoice_records:
+		if not row.posting_date:
+			continue
+		key = getdate(row.posting_date).strftime("%Y-%m")
+		if key in buckets:
+			buckets[key]["amount"] += flt(row.grand_total)
+			buckets[key]["count"] += 1
+
+	return list(buckets.values())
+
+
+@frappe.whitelist()
+def get_dispatches(status: str | None = None, filter: str | None = None, search: str | None = None):
+	_require_login()
+	filters = _dispatch_filters()
+	if status:
+		filters["delivery_status"] = status
+
+	if filter == "open":
+		filters["delivery_status"] = "Open"
+	elif filter == "in_transit":
+		filters["delivery_status"] = "In Transit"
+	elif filter == "completed":
+		filters["delivery_status"] = "Completed"
+	elif filter == "no_driver":
+		filters["driver"] = ("in", ["", None])
+	elif filter == "needs_action":
+		pass
+
+	records = frappe.get_all(
+		"Delivery Note",
+		filters=filters,
+		fields=[
+			"name",
+			"customer",
+			"customer_name",
+			"posting_date",
+			"delivery_status",
+			"sms_status",
+			"driver",
+			"transport_customer_name",
+			"transport_phone",
+			"transport_email",
+			"transport_address",
+			"otp",
+			"otp_expires_at",
+			"transport_sales_order",
+			"transport_sales_invoice",
+			"confirmation_log",
+		],
+		order_by="modified desc",
+		limit=200,
+	)
+
+	if filter == "needs_action":
+		filtered = []
+		for row in records:
+			so_docstatus = frappe.db.get_value("Sales Order", row.transport_sales_order, "docstatus")
+			if row.delivery_status == "Open" or so_docstatus == 0:
+				filtered.append(row)
+		records = filtered
+
+	if search:
+		term = search.strip().lower()
+		records = [
+			row
+			for row in records
+			if term in (row.name or "").lower()
+			or term in (row.customer_name or "").lower()
+			or term in (row.transport_customer_name or "").lower()
+			or term in (row.driver or "").lower()
+		]
+
+	for row in records:
+		row["delivery_status"] = _normalize_delivery_status(row.delivery_status)
+		row["items"] = frappe.get_all(
+			"Delivery Note Item",
+			filters={"parent": row.name},
+			fields=["item_code", "item_name", "qty", "uom"],
+		)
+		row["item_status"] = _get_item_delivery_status(row.name, row.delivery_status)
+		so_docstatus = frappe.db.get_value("Sales Order", row.transport_sales_order, "docstatus")
+		row["transport_order_submitted"] = so_docstatus == 1
+		row["needs_action"] = row.delivery_status == "Open" or so_docstatus == 0
+	return records
+
+
+def _confirmation_log_items_available() -> bool:
+	return bool(frappe.db.exists("DocType", "Delivery Confirmation Log Item"))
+
+
+def _get_confirmation_log_items(log_name: str) -> list[dict]:
+	if not _confirmation_log_items_available():
+		return []
+	return frappe.get_all(
+		"Delivery Confirmation Log Item",
+		filters={"parent": log_name},
+		fields=["item_code", "item_name", "qty_ordered", "qty_delivered", "uom"],
+	)
+
+
+def _get_item_delivery_status(delivery_note_name: str, delivery_status: str | None) -> list[dict]:
+	delivery_status = _normalize_delivery_status(delivery_status)
+	dn_items = frappe.get_all(
+		"Delivery Note Item",
+		filters={"parent": delivery_note_name},
+		fields=["item_code", "item_name", "qty", "uom"],
+	)
+	delivered_map = {}
+	if delivery_status == "Completed":
+		log_name = frappe.db.get_value("Delivery Note", delivery_note_name, "confirmation_log")
+		if log_name and _confirmation_log_items_available():
+			for row in _get_confirmation_log_items(log_name):
+				delivered_map[row["item_code"]] = row
+
+	result = []
+	for item in dn_items:
+		delivered = delivered_map.get(item.item_code)
+		qty_delivered = flt(delivered.get("qty_delivered")) if delivered else None
+		qty_ordered = flt(item.qty)
+		if delivery_status == "Completed":
+			if delivered and qty_delivered < qty_ordered:
+				item_status = "Partially Delivered"
+			else:
+				item_status = "Delivered"
+		elif delivery_status == "In Transit":
+			item_status = "In Transit"
+		elif delivery_status == "Open":
+			item_status = "Open"
+		else:
+			item_status = delivery_status
+		result.append(
+			{
+				"item_code": item.item_code,
+				"item_name": item.item_name,
+				"qty_ordered": qty_ordered,
+				"qty_delivered": qty_delivered,
+				"uom": item.uom,
+				"status": item_status,
+			}
+		)
+	return result
+
+
+@frappe.whitelist()
+def get_dispatch_detail(delivery_note: str):
+	_require_login()
+	_ensure_transport_delivery_note(delivery_note)
+	doc = frappe.get_doc("Delivery Note", delivery_note)
+	logs = frappe.get_all(
+		"Delivery Confirmation Log",
+		filters={"delivery_note": delivery_note},
+		fields=[
+			"name",
+			"status",
+			"completion_type",
+			"partial_reason",
+			"confirmation_time",
+			"driver",
+			"otp",
+		],
+		order_by="confirmation_time asc",
+	)
+	confirmation_logs = []
+	for log in logs:
+		row = dict(log)
+		row["items"] = _get_confirmation_log_items(row["name"])
+		confirmation_logs.append(row)
+
+	return {
+		"name": doc.name,
+		"delivery_status": _normalize_delivery_status(doc.delivery_status),
+		"customer_name": doc.customer_name,
+		"transport_customer_name": doc.transport_customer_name,
+		"transport_address": doc.transport_address,
+		"driver": doc.driver,
+		"transport_sales_order": doc.transport_sales_order,
+		"transport_sales_invoice": doc.transport_sales_invoice,
+		"item_status": _get_item_delivery_status(doc.name, doc.delivery_status),
+		"confirmation_logs": confirmation_logs,
+		"sms_logs": get_delivery_sms_logs(doc.name),
+		"sms_status": doc.get("sms_status") or "Not Sent",
+		"movements": _get_delivery_movements(delivery_note),
+	}
+
+
+def _get_delivery_movements(delivery_note: str) -> list[dict]:
+	logs = frappe.get_all(
+		"Delivery Confirmation Log",
+		filters={"delivery_note": delivery_note},
+		fields=["status", "confirmation_time", "completion_type", "partial_reason", "driver"],
+		order_by="confirmation_time asc",
+	)
+	if logs:
+		return [
+			{
+				"status": row.status,
+				"confirmation_time": row.confirmation_time,
+				"completion_type": row.completion_type,
+				"partial_reason": row.partial_reason,
+				"driver": row.driver,
+			}
+			for row in logs
+		]
+
+	current_status = _normalize_delivery_status(
+		frappe.db.get_value("Delivery Note", delivery_note, "delivery_status")
+	)
+	return [{"status": current_status, "confirmation_time": None, "driver": None}]
+
+
+@frappe.whitelist()
+def track_deliveries(query: str | None = None, status: str | None = "In Transit"):
+	_require_login()
+	filters = _dispatch_filters()
+	if status and status not in ("all", ""):
+		if status == "completed":
+			filters["delivery_status"] = "Completed"
+		else:
+			filters["delivery_status"] = status
+
+	records = frappe.get_all(
+		"Delivery Note",
+		filters=filters,
+		fields=[
+			"name",
+			"delivery_status",
+			"transport_customer_name",
+			"customer_name",
+			"driver",
+			"transport_phone",
+			"transport_address",
+			"otp",
+			"otp_expires_at",
+			"posting_date",
+			"transport_sales_order",
+		],
+		order_by="modified desc",
+		limit=100,
+	)
+
+	if query and query.strip():
+		term = query.strip().lower()
+		records = [
+			row
+			for row in records
+			if term in (row.name or "").lower()
+			or term == (row.otp or "").lower()
+			or term in (row.transport_customer_name or "").lower()
+			or term in (row.customer_name or "").lower()
+		]
+
+	for row in records:
+		row["delivery_status"] = _normalize_delivery_status(row.delivery_status)
+		row["movements"] = _get_delivery_movements(row.name)
+
+	return records
+
+
+@frappe.whitelist()
+def get_transport_orders(docstatus: str | None = None):
+	_require_login()
+	filters = _transport_sales_order_filters()
+	if docstatus not in (None, ""):
+		filters["docstatus"] = int(docstatus)
+
+	orders = frappe.get_all(
+		"Sales Order",
+		filters=filters,
+		fields=[
+			"name",
+			"customer",
+			"customer_name",
+			"transaction_date",
+			"grand_total",
+			"docstatus",
+			"custom_delivery_note_to_be_transported",
+			"status",
+			"currency",
+		],
+		order_by="modified desc",
+		limit=200,
+	)
+	for order in orders:
+		order["items"] = frappe.get_all(
+			"Sales Order Item",
+			filters={"parent": order.name},
+			fields=["name", "item_code", "item_name", "qty", "rate", "amount", "uom"],
+		)
+		dn = order.get("custom_delivery_note_to_be_transported")
+		raw_status = frappe.db.get_value("Delivery Note", dn, "delivery_status") if dn else None
+		order["delivery_status"] = _normalize_delivery_status(raw_status) if dn else None
+		order["driver"] = frappe.db.get_value("Delivery Note", dn, "driver") if dn else None
+	return orders
+
+
+@frappe.whitelist()
+def get_transport_order(name: str):
+	_require_login()
+	_ensure_transport_sales_order(name)
+	doc = frappe.get_doc("Sales Order", name)
+	return {
+		"name": doc.name,
+		"customer_name": doc.customer_name,
+		"docstatus": doc.docstatus,
+		"grand_total": doc.grand_total,
+		"currency": doc.currency,
+		"custom_delivery_note_to_be_transported": doc.custom_delivery_note_to_be_transported,
+		"items": [
+			{
+				"name": row.name,
+				"item_code": row.item_code,
+				"item_name": row.item_name,
+				"qty": row.qty,
+				"rate": row.rate,
+				"amount": row.amount,
+				"uom": row.uom,
+			}
+			for row in doc.items
+		],
+	}
+
+
+@frappe.whitelist()
+def update_transport_order(name: str, qty: float | None = None, rate: float | None = None):
+	_require_login()
+	_ensure_transport_sales_order(name)
+	doc = frappe.get_doc("Sales Order", name)
+	if doc.docstatus != 0:
+		frappe.throw(_("Only draft transport orders can be edited"))
+
+	if not doc.items:
+		frappe.throw(_("Transport order has no items"))
+
+	row = doc.items[0]
+	if qty is not None:
+		row.qty = flt(qty)
+	if rate is not None:
+		row.rate = flt(rate)
+	row.amount = flt(row.qty) * flt(row.rate)
+
+	doc.flags.ignore_permissions = True
+	doc.calculate_taxes_and_totals()
+	doc.save()
+	return {"name": doc.name, "grand_total": doc.grand_total}
+
+
+@frappe.whitelist()
+def submit_transport_order(name: str):
+	_require_login()
+	_ensure_transport_sales_order(name)
+	doc = frappe.get_doc("Sales Order", name)
+	if doc.docstatus != 0:
+		frappe.throw(_("Transport order is already submitted"))
+
+	dn_name = doc.get("custom_delivery_note_to_be_transported")
+	if dn_name and not frappe.db.get_value("Delivery Note", dn_name, "driver"):
+		frappe.throw(_("Assign a driver before approving this order"))
+
+	doc.flags.ignore_permissions = True
+	doc.submit()
+	return {"name": doc.name, "docstatus": doc.docstatus}
+
+
+@frappe.whitelist()
+def assign_dispatch_driver(delivery_note: str, driver: str):
+	_require_login()
+	_ensure_transport_delivery_note(delivery_note)
+	doc = frappe.get_doc("Delivery Note", delivery_note)
+	if doc.delivery_status not in ("Open", "", None):
+		frappe.throw(_("Driver can only be changed while delivery status is Open"))
+	_ensure_driver_access(driver)
+	if frappe.db.get_value("Driver", driver, "status") != "Active":
+		frappe.throw(_("Selected driver is not active"))
+
+	frappe.db.set_value("Delivery Note", delivery_note, "driver", driver, update_modified=True)
+	return {"delivery_note": delivery_note, "driver": driver}
+
+
+@frappe.whitelist()
+def update_dispatch_transport_customer(
+	delivery_note: str,
+	transport_customer_name: str | None = None,
+	transport_phone: str | None = None,
+	transport_email: str | None = None,
+	transport_address: str | None = None,
+):
+	_require_login()
+	_ensure_transport_delivery_note(delivery_note)
+	doc = frappe.get_doc("Delivery Note", delivery_note)
+	if doc.delivery_status not in ("Open", "", None):
+		frappe.throw(_("Transport customer details can only be edited while delivery status is Open"))
+
+	updates = {}
+	if transport_customer_name is not None:
+		updates["transport_customer_name"] = transport_customer_name
+	if transport_phone is not None:
+		updates["transport_phone"] = transport_phone
+	if transport_email is not None:
+		updates["transport_email"] = transport_email
+	if transport_address is not None:
+		updates["transport_address"] = transport_address
+	if updates:
+		frappe.db.set_value("Delivery Note", delivery_note, updates, update_modified=True)
+	return {"delivery_note": delivery_note, **updates}
+
+
+@frappe.whitelist()
+def get_drivers(include_inactive: int | str = 0):
+	_require_login()
+	company = _transport_company()
+	filters = {}
+	if not int(include_inactive):
+		filters["status"] = "Active"
+	if company:
+		filters["transport_company"] = company
+
+	return frappe.get_all(
+		"Driver",
+		filters=filters,
+		fields=[
+			"name",
+			"full_name",
+			"cell_number",
+			"vehicle_number",
+			"transport_company",
+			"unique_key",
+			"status",
+		],
+		order_by="full_name asc",
+	)
+
+
+@frappe.whitelist()
+def create_driver(
+	full_name: str,
+	cell_number: str,
+	vehicle_number: str | None = None,
+):
+	_require_login()
+	if not full_name or not cell_number:
+		frappe.throw(_("Full name and phone number are required"))
+
+	company = _transport_company()
+	doc = frappe.get_doc(
+		{
+			"doctype": "Driver",
+			"full_name": full_name.strip(),
+			"cell_number": cell_number.strip(),
+			"vehicle_number": vehicle_number or "",
+			"status": "Active",
+			"transport_company": company,
+		}
+	)
+	doc.flags.ignore_permissions = True
+	doc.insert()
+	return {
+		"name": doc.name,
+		"full_name": doc.full_name,
+		"cell_number": doc.cell_number,
+		"vehicle_number": doc.vehicle_number,
+		"unique_key": doc.unique_key,
+		"status": doc.status,
+	}
+
+
+@frappe.whitelist()
+def update_driver(
+	name: str,
+	full_name: str | None = None,
+	cell_number: str | None = None,
+	vehicle_number: str | None = None,
+	status: str | None = None,
+):
+	_require_login()
+	_ensure_driver_access(name)
+	doc = frappe.get_doc("Driver", name)
+	if full_name is not None:
+		doc.full_name = full_name.strip()
+	if cell_number is not None:
+		doc.cell_number = cell_number.strip()
+	if vehicle_number is not None:
+		doc.vehicle_number = vehicle_number
+	if status is not None:
+		if status not in ("Active", "Suspended", "Left"):
+			frappe.throw(_("Invalid driver status"))
+		doc.status = status
+	doc.flags.ignore_permissions = True
+	doc.save()
+	return {
+		"name": doc.name,
+		"full_name": doc.full_name,
+		"cell_number": doc.cell_number,
+		"vehicle_number": doc.vehicle_number,
+		"unique_key": doc.unique_key,
+		"status": doc.status,
+	}
+
+
+@frappe.whitelist()
+def deactivate_driver(name: str):
+	_require_login()
+	return update_driver(name, status="Left")
+
+
+@frappe.whitelist()
+def regenerate_driver_key(name: str):
+	_require_login()
+	_ensure_driver_access(name)
+	doc = frappe.get_doc("Driver", name)
+	doc.unique_key = ""
+	doc.flags.ignore_permissions = True
+	doc.save()
+	return {"name": doc.name, "unique_key": doc.unique_key}
+
+
+@frappe.whitelist()
+def get_active_otps():
+	_require_login()
+	filters = {
+		**_dispatch_filters(),
+		"otp": ("is", "set"),
+		"delivery_status": "In Transit",
+	}
+	records = frappe.get_all(
+		"Delivery Note",
+		filters=filters,
+		fields=[
+			"name",
+			"customer_name",
+			"transport_customer_name",
+			"driver",
+			"otp",
+			"otp_generated_at",
+			"otp_expires_at",
+			"delivery_status",
+		],
+		order_by="otp_generated_at desc",
+		limit=100,
+	)
+	now = now_datetime()
+	for row in records:
+		row["is_expired"] = bool(row.otp_expires_at and now > row.otp_expires_at)
+	return records
+
+
+@frappe.whitelist()
+def get_transport_invoices():
+	_require_login()
+	dn_filters = {**_dispatch_filters(), "transport_sales_invoice": ("is", "set")}
+	invoice_names = frappe.get_all(
+		"Delivery Note",
+		filters=dn_filters,
+		pluck="transport_sales_invoice",
+	)
+	if not invoice_names:
+		return []
+
+	return frappe.get_all(
+		"Sales Invoice",
+		filters={"name": ("in", invoice_names)},
+		fields=["name", "customer", "customer_name", "posting_date", "grand_total", "status", "docstatus", "currency"],
+		order_by="posting_date desc",
+		limit=100,
+	)
+
+
+@frappe.whitelist()
+def get_confirmation_logs(delivery_note: str | None = None):
+	_require_login()
+	filters = {}
+	if delivery_note:
+		filters["delivery_note"] = delivery_note
+
+	logs = frappe.get_all(
+		"Delivery Confirmation Log",
+		filters=filters,
+		fields=[
+			"name",
+			"delivery_note",
+			"sales_order",
+			"driver",
+			"transport_customer",
+			"otp",
+			"confirmation_time",
+			"status",
+			"completion_type",
+			"partial_reason",
+		],
+		order_by="confirmation_time desc",
+		limit=100,
+	)
+	confirmation_logs = []
+	for log in logs:
+		row = dict(log)
+		row["items"] = _get_confirmation_log_items(row["name"])
+		confirmation_logs.append(row)
+	return confirmation_logs
+
+
+@frappe.whitelist()
+def get_sms_logs(delivery_note: str | None = None):
+	_require_login()
+	if delivery_note:
+		if not frappe.db.exists("Delivery Note", delivery_note):
+			return []
+		if delivery_note not in _get_linked_delivery_notes():
+			if not frappe.has_permission("Delivery Note", "read", delivery_note):
+				frappe.throw(_("This delivery note is not linked to your transport company"))
+			return get_delivery_sms_logs(delivery_note)
+		return get_delivery_sms_logs(delivery_note)
+
+	dn_names = _get_linked_delivery_notes()
+	if not dn_names:
+		return []
+
+	if not frappe.db.exists("DocType", "Delivery SMS Log"):
+		return []
+
+	return frappe.get_all(
+		"Delivery SMS Log",
+		filters={"delivery_note": ("in", dn_names)},
+		fields=[
+			"name",
+			"delivery_note",
+			"party",
+			"event",
+			"recipient",
+			"recipient_label",
+			"message",
+			"status",
+			"sent_at",
+			"error",
+			"creation",
+		],
+		order_by="creation desc",
+		limit=200,
+	)

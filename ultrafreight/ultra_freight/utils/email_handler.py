@@ -3,9 +3,24 @@ from frappe import _
 from frappe.utils import get_url_to_form
 
 
+def has_outgoing_email_account() -> bool:
+	try:
+		from frappe.email.doctype.email_account.email_account import EmailAccount
+
+		return bool(EmailAccount.find_outgoing(_raise_error=False))
+	except Exception:
+		return False
+
+
 def send_transport_email(recipients: list[str], subject: str, message: str, reference_doctype=None, reference_name=None):
 	recipients = [email for email in recipients if email]
 	if not recipients:
+		return
+
+	if not has_outgoing_email_account():
+		frappe.logger("ultra_dispatch").info(
+			"Skipping transport email to %s — no outgoing Email Account configured", recipients
+		)
 		return
 
 	try:

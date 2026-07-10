@@ -68,6 +68,28 @@ def get_sales_order_fields():
 			"label": "Transport Charge",
 			"insert_after": "expected_delivery_date",
 		},
+		{
+			"fieldname": "transport_charge_order_section",
+			"fieldtype": "Section Break",
+			"label": "Transport Charge Order",
+			"collapsible": 1,
+			"insert_after": "transport_charge",
+		},
+		{
+			"fieldname": "custom_is_transport_order",
+			"fieldtype": "Check",
+			"label": "Is Transport Order",
+			"read_only": 1,
+			"insert_after": "transport_charge_order_section",
+		},
+		{
+			"fieldname": "custom_delivery_note_to_be_transported",
+			"fieldtype": "Link",
+			"label": "Delivery Note To Be Transported",
+			"options": "Delivery Note",
+			"read_only": 1,
+			"insert_after": "custom_is_transport_order",
+		},
 	]
 
 
@@ -132,9 +154,11 @@ def get_delivery_note_fields():
 			"fieldname": "delivery_status",
 			"fieldtype": "Select",
 			"label": "Delivery Status",
-			"options": "\nPending\nIn Transit\nArrived\nDelivered\nConfirmed",
-			"default": "Pending",
+			"options": "\nOpen\nIn Transit\nCompleted",
+			"default": "Open",
 			"read_only": 1,
+			"in_list_view": 1,
+			"in_standard_filter": 1,
 			"insert_after": "transport_status_column",
 		},
 		{
@@ -167,12 +191,30 @@ def get_delivery_note_fields():
 			"insert_after": "otp_expires_at",
 		},
 		{
+			"fieldname": "sms_status",
+			"fieldtype": "Select",
+			"label": "SMS Status",
+			"options": "\nNot Sent\nPartially Sent\nSent\nFailed",
+			"default": "Not Sent",
+			"read_only": 1,
+			"in_list_view": 1,
+			"insert_after": "confirmation_log",
+		},
+		{
+			"fieldname": "transport_sales_order",
+			"fieldtype": "Link",
+			"label": "Transport Sales Order",
+			"options": "Sales Order",
+			"read_only": 1,
+			"insert_after": "confirmation_log",
+		},
+		{
 			"fieldname": "transport_sales_invoice",
 			"fieldtype": "Link",
 			"label": "Transport Sales Invoice",
 			"options": "Sales Invoice",
 			"read_only": 1,
-			"insert_after": "confirmation_log",
+			"insert_after": "transport_sales_order",
 		},
 	]
 
