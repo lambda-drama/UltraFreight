@@ -35,9 +35,9 @@ def _record(dt: str, field: dict) -> dict:
 		"ignore_user_permissions": 0,
 		"ignore_xss_filter": 0,
 		"in_global_search": 0,
-		"in_list_view": 0,
+		"in_list_view": field.get("in_list_view", 0),
 		"in_preview": 0,
-		"in_standard_filter": 0,
+		"in_standard_filter": field.get("in_standard_filter", 0),
 		"insert_after": field.get("insert_after"),
 		"is_system_generated": 0,
 		"is_virtual": 0,
@@ -76,3 +76,7 @@ def main():
 			records.append(_record(dt, field))
 	FIXTURE_PATH.write_text(json.dumps(records, indent=1) + "\n")
 	print(f"Wrote {len(records)} fields to {FIXTURE_PATH}")
+
+
+if __name__ == "__main__":
+	main()

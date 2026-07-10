@@ -1,45 +1,23 @@
+import json
+
 import frappe
 from frappe import _
-from frappe.utils import now_datetime
+from frappe.utils import flt, now_datetime
 
 from ultrafreight.ultra_freight.api.notifications import (
 	create_confirmation_log,
 	notify_delivery_confirmed,
-	notify_driver_arrival,
-	notify_on_the_way,
 )
 
 
 @frappe.whitelist()
 def mark_in_transit(delivery_note: str):
-	doc = frappe.get_doc("Delivery Note", delivery_note)
-	if not doc.get("require_direct_delivery"):
-		frappe.throw(_("This Delivery Note is not a direct delivery order"))
-	if doc.docstatus != 1:
-		frappe.throw(_("Delivery Note must be submitted"))
-	if not doc.get("driver"):
-		frappe.throw(_("Assign a driver before marking as In Transit"))
-	if doc.get("delivery_status") not in (None, "", "Pending"):
-		frappe.throw(_("Delivery is already {0}").format(doc.delivery_status))
-
-	frappe.db.set_value("Delivery Note", doc.name, "delivery_status", "In Transit", update_modified=True)
-	notify_on_the_way(doc.name)
-	return {"status": "In Transit"}
+	frappe.throw(_("Status is set to In Transit automatically when the transport order is submitted"))
 
 
 @frappe.whitelist()
 def mark_arrived(delivery_note: str):
-	doc = frappe.get_doc("Delivery Note", delivery_note)
-	if not doc.get("require_direct_delivery"):
-		frappe.throw(_("This Delivery Note is not a direct delivery order"))
-	if doc.docstatus != 1:
-		frappe.throw(_("Delivery Note must be submitted"))
-	if doc.get("delivery_status") != "In Transit":
-		frappe.throw(_("Delivery must be In Transit before marking as Arrived"))
-
-	frappe.db.set_value("Delivery Note", doc.name, "delivery_status", "Arrived", update_modified=True)
-	notify_driver_arrival(doc.name)
-	return {"status": "Arrived"}
+	frappe.throw(_("Arrived status is no longer used. Drivers confirm delivery from the transport portal"))
 
 
 @frappe.whitelist(allow_guest=True)
@@ -66,6 +44,47 @@ def _get_verified_driver(driver: str, unique_key: str) -> dict:
 	return driver_doc
 
 
+def _get_delivery_items(delivery_note_name: str) -> list[dict]:
+	return frappe.get_all(
+		"Delivery Note Item",
+		filters={"parent": delivery_note_name},
+		fields=["item_name", "item_code", "qty", "uom"],
+	)
+
+
+def _get_linked_sales_order(doc) -> str | None:
+	for item in doc.items:
+		if item.against_sales_order:
+			return item.against_sales_order
+	return None
+
+
+@frappe.whitelist(allow_guest=True)
+def get_driver_assignments(driver: str, unique_key: str):
+	driver_doc = _get_verified_driver(driver, unique_key)
+	assignments = frappe.get_all(
+		"Delivery Note",
+		filters={
+			"driver": driver_doc.name,
+			"docstatus": 1,
+			"require_direct_delivery": 1,
+			"delivery_status": "In Transit",
+		},
+		fields=[
+			"name",
+			"transport_customer_name",
+			"transport_address",
+			"transport_phone",
+			"delivery_status",
+			"otp_expires_at",
+		],
+		order_by="modified desc",
+	)
+	for row in assignments:
+		row["items"] = _get_delivery_items(row.name)
+	return {"driver_name": driver_doc.full_name, "assignments": assignments}
+
+
 @frappe.whitelist(allow_guest=True)
 def verify_driver_otp(driver: str, unique_key: str, otp: str):
 	driver_doc = _get_verified_driver(driver, unique_key)
@@ -76,7 +95,7 @@ def verify_driver_otp(driver: str, unique_key: str, otp: str):
 			"otp": otp,
 			"driver": driver_doc.name,
 			"docstatus": 1,
-			"delivery_status": ("in", ["In Transit", "Arrived", "Pending"]),
+			"delivery_status": "In Transit",
 		},
 		[
 			"name",
@@ -88,38 +107,17 @@ def verify_driver_otp(driver: str, unique_key: str, otp: str):
 		as_dict=True,
 	)
 	if not delivery_note:
-		delivery_note = frappe.db.get_value(
-			"Delivery Note",
-			{"otp": otp, "docstatus": 1, "require_direct_delivery": 1},
-			[
-				"name",
-				"otp_expires_at",
-				"transport_customer_name",
-				"transport_address",
-				"delivery_status",
-				"driver",
-			],
-			as_dict=True,
-		)
-
-	if not delivery_note:
 		frappe.throw(_("Invalid OTP or no matching delivery found"), frappe.AuthenticationError)
 
 	if delivery_note.otp_expires_at and now_datetime() > delivery_note.otp_expires_at:
 		frappe.throw(_("OTP has expired"), frappe.AuthenticationError)
-
-	items = frappe.get_all(
-		"Delivery Note Item",
-		filters={"parent": delivery_note.name},
-		fields=["item_name", "item_code", "qty", "uom"],
-	)
 
 	return {
 		"delivery_note": delivery_note.name,
 		"customer_name": delivery_note.transport_customer_name,
 		"address": delivery_note.transport_address,
 		"delivery_status": delivery_note.delivery_status,
-		"items": items,
+		"items": _get_delivery_items(delivery_note.name),
 		"driver_name": driver_doc.full_name,
 	}
 
@@ -130,22 +128,77 @@ def confirm_delivery(
 	unique_key: str,
 	otp: str,
 	delivery_note: str,
+	completion_type: str = "Full",
+	partial_reason: str | None = None,
+	items: str | None = None,
 	gps_location: str | None = None,
 ):
+	if isinstance(items, str) and items:
+		items = json.loads(items)
+	elif not items:
+		items = None
+
 	verification = verify_driver_otp(driver, unique_key, otp)
 	if verification.get("delivery_note") != delivery_note:
 		frappe.throw(_("Delivery Note mismatch"), frappe.AuthenticationError)
 
 	doc = frappe.get_doc("Delivery Note", delivery_note)
-	if doc.delivery_status == "Confirmed":
-		frappe.throw(_("Delivery already confirmed"))
+	if doc.delivery_status == "Completed":
+		frappe.throw(_("Delivery already completed"))
 
 	driver_doc = _get_verified_driver(driver, unique_key)
-	sales_order = None
-	for item in doc.items:
-		if item.against_sales_order:
-			sales_order = item.against_sales_order
-			break
+	sales_order = _get_linked_sales_order(doc)
+	dn_items = {row.item_code: row for row in doc.items}
+
+	completion_type = (completion_type or "Full").strip()
+	if completion_type not in ("Full", "Partial"):
+		frappe.throw(_("Completion type must be Full or Partial"))
+
+	if completion_type == "Partial" and not (partial_reason or "").strip():
+		frappe.throw(_("Please provide a reason for partial delivery"))
+
+	delivered_items = []
+	if completion_type == "Full":
+		for row in doc.items:
+			delivered_items.append(
+				{
+					"item_code": row.item_code,
+					"item_name": row.item_name,
+					"qty_ordered": row.qty,
+					"qty_delivered": row.qty,
+					"uom": row.uom,
+				}
+			)
+	else:
+		if not items:
+			frappe.throw(_("Please enter quantities delivered for each item"))
+		for row in items:
+			item_code = row.get("item_code")
+			if item_code not in dn_items:
+				frappe.throw(_("Item {0} is not part of this delivery").format(item_code))
+			qty_delivered = flt(row.get("qty_delivered"))
+			qty_ordered = flt(dn_items[item_code].qty)
+			if qty_delivered < 0:
+				frappe.throw(_("Delivered quantity cannot be negative for {0}").format(item_code))
+			if qty_delivered > qty_ordered:
+				frappe.throw(_("Delivered quantity cannot exceed ordered quantity for {0}").format(item_code))
+			delivered_items.append(
+				{
+					"item_code": item_code,
+					"item_name": dn_items[item_code].item_name,
+					"qty_ordered": qty_ordered,
+					"qty_delivered": qty_delivered,
+					"uom": dn_items[item_code].uom,
+				}
+			)
+
+		all_full = all(flt(row["qty_delivered"]) >= flt(row["qty_ordered"]) for row in delivered_items)
+		any_delivered = any(flt(row["qty_delivered"]) > 0 for row in delivered_items)
+		if not any_delivered:
+			frappe.throw(_("At least one item must have a delivered quantity"))
+		if all_full:
+			completion_type = "Full"
+			partial_reason = None
 
 	log_name = create_confirmation_log(
 		delivery_note_name=doc.name,
@@ -153,6 +206,10 @@ def confirm_delivery(
 		driver_name=driver_doc.name,
 		transport_customer=doc.get("transport_customer"),
 		otp=otp,
+		status="Completed",
+		completion_type=completion_type,
+		partial_reason=partial_reason if completion_type == "Partial" else None,
+		items=delivered_items,
 		ip_address=frappe.local.request_ip if frappe.request else None,
 		gps_location=gps_location,
 	)
@@ -161,7 +218,7 @@ def confirm_delivery(
 		"Delivery Note",
 		doc.name,
 		{
-			"delivery_status": "Confirmed",
+			"delivery_status": "Completed",
 			"confirmation_log": log_name,
 		},
 		update_modified=True,
@@ -170,7 +227,8 @@ def confirm_delivery(
 	notify_delivery_confirmed(doc.name, sales_order)
 
 	return {
-		"status": "Confirmed",
+		"status": "Completed",
+		"completion_type": completion_type,
 		"confirmation_log": log_name,
 		"sales_invoice": doc.get("transport_sales_invoice"),
 	}

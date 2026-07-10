@@ -13,6 +13,8 @@
   "driver",
   "transport_customer",
   "status",
+  "completion_type",
+  "partial_reason",
   "confirmation_section",
   "otp",
   "confirmation_time",
@@ -60,12 +62,35 @@
    "options": "Transport Customer"
   },
   {
-   "default": "Pending",
+   "default": "Open",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Pending\nConfirmed\nFailed"
+   "options": "Open\nIn Transit\nCompleted\nFailed"
+  },
+  {
+   "fieldname": "completion_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Completion Type",
+   "options": "\nFull\nPartial"
+  },
+  {
+   "fieldname": "partial_reason",
+   "fieldtype": "Small Text",
+   "label": "Partial Delivery Reason"
+  },
+  {
+   "fieldname": "items_section",
+   "fieldtype": "Section Break",
+   "label": "Delivered Items"
+  },
+  {
+   "fieldname": "items",
+   "fieldtype": "Table",
+   "label": "Items",
+   "options": "Delivery Confirmation Log Item"
   },
   {
    "fieldname": "confirmation_section",

@@ -4,3 +4,4 @@
 
 [post_model_sync]
 ultrafreight.patches.v1_0.remove_so_transporter_field
+ultrafreight.patches.v1_0.normalize_delivery_status

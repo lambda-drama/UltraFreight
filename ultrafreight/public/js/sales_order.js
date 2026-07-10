@@ -28,9 +28,15 @@ function toggle_transport_fields(frm) {
 		"driver",
 		"expected_delivery_date",
 		"transport_charge",
+		"custom_is_transport_order",
+		"custom_delivery_note_to_be_transported",
 	];
-	fields.forEach((field) => frm.toggle_display(field, show));
+	fields.forEach((field) => frm.toggle_display(field, show || frm.doc.custom_is_transport_order));
 	frm.toggle_reqd("transport_customer_name", show);
 	frm.toggle_reqd("transport_phone", show);
 	frm.toggle_reqd("driver", show);
+
+	if (frm.doc.custom_is_transport_order) {
+		frm.set_df_property("require_direct_delivery", "read_only", 1);
+	}
 }

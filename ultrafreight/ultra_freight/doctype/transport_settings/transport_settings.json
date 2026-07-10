@@ -43,7 +43,7 @@
    "fieldtype": "Column Break"
   },
   {
-   "default": "/driver-confirmation",
+   "default": "/driver",
    "description": "Public URL path for driver delivery confirmation",
    "fieldname": "driver_portal_url",
    "fieldtype": "Data",
