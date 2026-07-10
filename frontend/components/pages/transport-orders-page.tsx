@@ -12,8 +12,8 @@ import {
   type TransportOrderRow,
 } from '@/services/transport'
 import { Badge, Button, DataTable, Input, Label, Modal, PageHeader, Select } from '@/components/ui/primitives'
-import { formatMoney } from '@/lib/utils'
-import { CheckCircle2, Loader2, Pencil } from 'lucide-react'
+import { formatMoney, openPrintView } from '@/lib/utils'
+import { CheckCircle2, Loader2, Pencil, Printer } from 'lucide-react'
 
 export default function TransportOrdersPage() {
   const [docstatusFilter, setDocstatusFilter] = useState('')
@@ -149,6 +149,15 @@ export default function TransportOrdersPage() {
                 const hasDriver = Boolean(order.driver)
                 return (
                   <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      className="h-9 w-9 p-0"
+                      title="Print transport order"
+                      aria-label="Print transport order"
+                      onClick={() => openPrintView('Sales Order', order.name)}
+                    >
+                      <Printer className="h-4 w-4" />
+                    </Button>
                     {Number(row.docstatus) === 0 ? (
                       <>
                         <Button

@@ -5,8 +5,9 @@ import useSWR from 'swr'
 import { toast } from 'sonner'
 import { Loader2, Package, Truck } from 'lucide-react'
 import { confirmDelivery, getActiveDrivers, verifyDriverOtp, type VerifiedDelivery } from '@/services/driver'
-import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Input, PageHeader } from '@/components/ui/primitives'
+import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Input } from '@/components/ui/primitives'
 import { APP_TITLE } from '@/lib/branding'
+import { getTransportPortalUrl } from '@/lib/driver-portal'
 import { useNavigation } from '@/contexts/navigation-context'
 
 type Step = 'login' | 'verify' | 'complete' | 'success'
@@ -100,14 +101,22 @@ export default function DriverPortalPage() {
   return (
     <div className="min-h-dvh">
       <div className="mx-auto max-w-lg px-4 py-10">
-        <div className="mb-10 flex items-center gap-4">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-secondary/15 ring-1 ring-secondary/30">
-            <Truck className="h-7 w-7 text-secondary" />
+        <div className="mb-10 flex items-start justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-secondary/15 ring-1 ring-secondary/30">
+              <Truck className="h-7 w-7 text-secondary" />
+            </div>
+            <div>
+              <div className="font-serif-display text-2xl font-semibold">{APP_TITLE}</div>
+              <div className="text-sm text-muted-foreground">Driver Delivery Portal</div>
+            </div>
           </div>
-          <div>
-            <div className="font-serif-display text-2xl font-semibold">{APP_TITLE}</div>
-            <div className="text-sm text-muted-foreground">Driver Delivery Portal</div>
-          </div>
+          <a
+            href={getTransportPortalUrl()}
+            className="shrink-0 text-sm font-medium text-primary hover:text-primary/80"
+          >
+            Transport Portal
+          </a>
         </div>
 
         {step === 'login' || step === 'verify' ? (
