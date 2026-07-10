@@ -1,4 +1,5 @@
 export const DRIVER_PORTAL_PATH = '/driver'
+export const TRANSPORT_PORTAL_PATH = '/transport'
 
 export function isDriverPortalPath(pathname?: string) {
   if (typeof window !== 'undefined') {
@@ -17,4 +18,9 @@ export function getDriverPortalUrl(driver?: string, key?: string) {
   if (key) params.set('key', key)
   const query = params.toString()
   return query ? `${origin}${DRIVER_PORTAL_PATH}?${query}` : `${origin}${DRIVER_PORTAL_PATH}`
+}
+
+export function getTransportPortalUrl() {
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  return `${origin}${TRANSPORT_PORTAL_PATH}`
 }

@@ -2,9 +2,9 @@
 
 import useSWR from 'swr'
 import { getTransportInvoices } from '@/services/transport'
-import { Badge, DataTable, PageHeader } from '@/components/ui/primitives'
-import { formatMoney } from '@/lib/utils'
-import { Loader2 } from 'lucide-react'
+import { Badge, Button, DataTable, PageHeader } from '@/components/ui/primitives'
+import { formatMoney, openPrintView } from '@/lib/utils'
+import { Loader2, Printer } from 'lucide-react'
 
 export default function InvoicesPage() {
   const { data, isLoading } = useSWR('transport-invoices', getTransportInvoices)
@@ -26,6 +26,21 @@ export default function InvoicesPage() {
               key: 'status',
               label: 'Status',
               render: (row) => <Badge variant="success">{String(row.status || 'Submitted')}</Badge>,
+            },
+            {
+              key: 'actions',
+              label: 'Actions',
+              render: (row) => (
+                <Button
+                  variant="outline"
+                  className="h-9 w-9 p-0"
+                  title="Print invoice"
+                  aria-label="Print invoice"
+                  onClick={() => openPrintView('Sales Invoice', String(row.name))}
+                >
+                  <Printer className="h-4 w-4" />
+                </Button>
+              ),
             },
           ]}
         />

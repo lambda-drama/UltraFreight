@@ -34,7 +34,7 @@ function toggle_transport_fields(frm) {
 	fields.forEach((field) => frm.toggle_display(field, show || frm.doc.custom_is_transport_order));
 	frm.toggle_reqd("transport_customer_name", show);
 	frm.toggle_reqd("transport_phone", show);
-	frm.toggle_reqd("driver", show);
+	// frm.toggle_reqd("driver", show);
 
 	if (frm.doc.custom_is_transport_order) {
 		frm.set_df_property("require_direct_delivery", "read_only", 1);

@@ -21,3 +21,14 @@ export function formatMoney(value?: number | null, currency?: string | null) {
     return `${formatted} ${code}`
   }
 }
+
+/** Open ERPNext/Frappe print view for a document in a new tab. */
+export function openPrintView(doctype: string, name: string) {
+  if (!doctype || !name) return
+  const params = new URLSearchParams({
+    doctype,
+    name,
+    trigger_print: '1',
+  })
+  window.open(`/printview?${params.toString()}`, '_blank', 'noopener,noreferrer')
+}

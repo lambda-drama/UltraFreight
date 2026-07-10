@@ -29,9 +29,9 @@ import {
   Textarea,
 } from '@/components/ui/primitives'
 import { useNavigation } from '@/contexts/navigation-context'
-import { ChevronDown, ChevronUp, Loader2, Search } from 'lucide-react'
+import { ChevronDown, ChevronUp, Loader2, Printer, Search } from 'lucide-react'
 
-import { formatDate } from '@/lib/utils'
+import { formatDate, openPrintView } from '@/lib/utils'
 
 const FILTERS = [
   { value: 'all', label: 'All Dispatches' },
@@ -232,6 +232,15 @@ export default function DispatchesPage() {
                         SMS: {row.sms_status}
                       </Badge>
                     ) : null}
+                    <Button
+                      variant="outline"
+                      className="h-9 w-9 p-0"
+                      title="Print delivery note"
+                      aria-label="Print delivery note"
+                      onClick={() => openPrintView('Delivery Note', row.name)}
+                    >
+                      <Printer className="h-4 w-4" />
+                    </Button>
                     <Button variant="outline" onClick={() => toggleExpand(row)}>
                       {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                     </Button>
@@ -247,6 +256,19 @@ export default function DispatchesPage() {
                     </div>
 
                     <div className="mb-4 flex flex-wrap gap-2">
+                      <Button variant="outline" onClick={() => openPrintView('Delivery Note', row.name)}>
+                        <Printer className="mr-2 h-4 w-4" />
+                        Print
+                      </Button>
+                      {row.transport_sales_order ? (
+                        <Button
+                          variant="outline"
+                          onClick={() => openPrintView('Sales Order', row.transport_sales_order!)}
+                        >
+                          <Printer className="mr-2 h-4 w-4" />
+                          Print Transport Order
+                        </Button>
+                      ) : null}
                       {isEditable ? (
                         <>
                           <Button variant="outline" onClick={() => openAssignDriver(row)}>Assign Driver</Button>
