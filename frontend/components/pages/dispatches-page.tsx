@@ -20,7 +20,6 @@ import {
   CardHeader,
   CardTitle,
   DataTable,
-  FilterPill,
   Input,
   Label,
   Modal,
@@ -29,21 +28,24 @@ import {
   Textarea,
 } from '@/components/ui/primitives'
 import { useNavigation } from '@/contexts/navigation-context'
+import { FilterToolbar, matchesDateRange, matchesText } from '@/components/layout/filter-toolbar'
 import { ChevronDown, ChevronUp, Loader2, Printer, Search } from 'lucide-react'
 
 import { formatDate, openPrintView } from '@/lib/utils'
 
-const FILTERS = [
-  { value: 'all', label: 'All Dispatches' },
+const STATUS_FILTERS = [
+  { value: '', label: 'All statuses' },
   { value: 'needs_action', label: 'Needs Action' },
   { value: 'open', label: 'Open' },
   { value: 'in_transit', label: 'In Transit' },
+  { value: 'pending_invoicing', label: 'Pending Invoicing' },
   { value: 'completed', label: 'Completed' },
   { value: 'no_driver', label: 'No Driver' },
 ]
 
 function statusVariant(status?: string) {
   if (status === 'Completed') return 'success'
+  if (status === 'Pending Invoicing') return 'warning'
   if (status === 'Partially Delivered') return 'warning'
   if (status === 'In Transit') return 'warning'
   if (status === 'Open') return 'muted'
@@ -84,14 +86,25 @@ export default function DispatchesPage() {
   const { viewParams } = useNavigation()
   const [filter, setFilter] = useState('needs_action')
   const [search, setSearch] = useState('')
+  const [customer, setCustomer] = useState('')
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
 
   useEffect(() => {
     const paramFilter = viewParams.get('filter')
     if (paramFilter) setFilter(paramFilter)
   }, [viewParams])
   const swrKey = useMemo(() => ['dispatches', filter, search], [filter, search])
-  const { data, isLoading, mutate } = useSWR(swrKey, () => getDispatches({ filter, search }))
+  const { data, isLoading, mutate } = useSWR(swrKey, () => getDispatches({ filter: filter || 'all', search }))
   const { data: drivers } = useSWR('active-drivers-list', () => getDrivers(false))
+
+  const filteredRows = useMemo(() => {
+    return (data || []).filter((row) => {
+      if (!matchesText(row.customer_name || row.transport_customer_name || '', customer)) return false
+      if (!matchesDateRange(row.posting_date || '', fromDate, toDate)) return false
+      return true
+    })
+  }, [data, customer, fromDate, toDate])
 
   const [expanded, setExpanded] = useState<string | null>(null)
   const [detailCache, setDetailCache] = useState<Record<string, Record<string, unknown>>>({})
@@ -179,30 +192,56 @@ export default function DispatchesPage() {
         description="Filter orders needing action, assign drivers, and track product delivery status"
       />
 
-      <div className="mb-6 flex flex-col gap-4">
-        <div className="flex flex-wrap gap-2 rounded-full bg-muted/70 p-1.5 ring-1 ring-border">
-          {FILTERS.map((f) => (
-            <FilterPill key={f.value} active={filter === f.value} onClick={() => setFilter(f.value)}>
-              {f.label}
-            </FilterPill>
-          ))}
-        </div>
-        <div className="relative">
-          <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search delivery note, customer, driver..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-11"
-          />
-        </div>
+      <FilterToolbar
+        fields={[
+          {
+            key: 'status',
+            label: 'Delivery status',
+            type: 'select',
+            value: filter === 'all' ? '' : filter,
+            onChange: (value) => setFilter(value || 'all'),
+            options: STATUS_FILTERS,
+          },
+          {
+            key: 'customer',
+            label: 'Customer',
+            type: 'text',
+            value: customer,
+            onChange: setCustomer,
+            placeholder: 'Search customer…',
+          },
+          {
+            key: 'from',
+            label: 'From date',
+            type: 'date',
+            value: fromDate,
+            onChange: setFromDate,
+          },
+          {
+            key: 'to',
+            label: 'To date',
+            type: 'date',
+            value: toDate,
+            onChange: setToDate,
+          },
+        ]}
+      />
+
+      <div className="mb-6 relative">
+        <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          placeholder="Search delivery note, customer, driver..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="pl-11"
+        />
       </div>
 
       {isLoading ? (
         <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
       ) : (
         <div className="space-y-3">
-          {(data || []).map((row) => {
+          {filteredRows.map((row) => {
             const isOpen = expanded === row.name
             const detail = detailCache[row.name]
             const itemStatus = (row.item_status || detail?.item_status || []) as ItemStatus[]
@@ -348,9 +387,9 @@ export default function DispatchesPage() {
               </Card>
             )
           })}
-          {!data?.length ? (
+          {!filteredRows.length ? (
             <div className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-              No delivery orders match this filter.
+              No delivery orders match these filters.
             </div>
           ) : null}
         </div>

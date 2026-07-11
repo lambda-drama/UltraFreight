@@ -143,8 +143,8 @@ def confirm_delivery(
 		frappe.throw(_("Delivery Note mismatch"), frappe.AuthenticationError)
 
 	doc = frappe.get_doc("Delivery Note", delivery_note)
-	if doc.delivery_status == "Completed":
-		frappe.throw(_("Delivery already completed"))
+	if doc.delivery_status in ("Completed", "Pending Invoicing"):
+		frappe.throw(_("Delivery already confirmed"))
 
 	driver_doc = _get_verified_driver(driver, unique_key)
 	sales_order = _get_linked_sales_order(doc)
@@ -206,7 +206,7 @@ def confirm_delivery(
 		driver_name=driver_doc.name,
 		transport_customer=doc.get("transport_customer"),
 		otp=otp,
-		status="Completed",
+		status="Pending Invoicing",
 		completion_type=completion_type,
 		partial_reason=partial_reason if completion_type == "Partial" else None,
 		items=delivered_items,
@@ -218,7 +218,7 @@ def confirm_delivery(
 		"Delivery Note",
 		doc.name,
 		{
-			"delivery_status": "Completed",
+			"delivery_status": "Pending Invoicing",
 			"confirmation_log": log_name,
 		},
 		update_modified=True,
@@ -227,7 +227,7 @@ def confirm_delivery(
 	notify_delivery_confirmed(doc.name, sales_order)
 
 	return {
-		"status": "Completed",
+		"status": "Pending Invoicing",
 		"completion_type": completion_type,
 		"confirmation_log": log_name,
 		"sales_invoice": doc.get("transport_sales_invoice"),

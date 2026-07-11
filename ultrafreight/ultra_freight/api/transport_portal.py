@@ -184,6 +184,9 @@ def get_dashboard_stats():
 		"in_transit": frappe.db.count(
 			"Delivery Note", {**dispatch_filters, "delivery_status": "In Transit"}
 		),
+		"pending_invoicing": frappe.db.count(
+			"Delivery Note", {**dispatch_filters, "delivery_status": "Pending Invoicing"}
+		),
 		"completed": frappe.db.count(
 			"Delivery Note",
 			{**dispatch_filters, "delivery_status": "Completed"},
@@ -250,6 +253,8 @@ def get_dispatches(status: str | None = None, filter: str | None = None, search:
 		filters["delivery_status"] = "Open"
 	elif filter == "in_transit":
 		filters["delivery_status"] = "In Transit"
+	elif filter == "pending_invoicing":
+		filters["delivery_status"] = "Pending Invoicing"
 	elif filter == "completed":
 		filters["delivery_status"] = "Completed"
 	elif filter == "no_driver":
@@ -337,7 +342,7 @@ def _get_item_delivery_status(delivery_note_name: str, delivery_status: str | No
 		fields=["item_code", "item_name", "qty", "uom"],
 	)
 	delivered_map = {}
-	if delivery_status == "Completed":
+	if delivery_status in ("Completed", "Pending Invoicing"):
 		log_name = frappe.db.get_value("Delivery Note", delivery_note_name, "confirmation_log")
 		if log_name and _confirmation_log_items_available():
 			for row in _get_confirmation_log_items(log_name):
@@ -348,7 +353,7 @@ def _get_item_delivery_status(delivery_note_name: str, delivery_status: str | No
 		delivered = delivered_map.get(item.item_code)
 		qty_delivered = flt(delivered.get("qty_delivered")) if delivered else None
 		qty_ordered = flt(item.qty)
-		if delivery_status == "Completed":
+		if delivery_status in ("Completed", "Pending Invoicing"):
 			if delivered and qty_delivered < qty_ordered:
 				item_status = "Partially Delivered"
 			else:
@@ -507,10 +512,23 @@ def get_transport_orders(docstatus: str | None = None):
 			"custom_delivery_note_to_be_transported",
 			"status",
 			"currency",
+			"custom_main_company_invoice",
+			"custom_main_company_invoice_date",
+			"custom_last_customer_invoice",
+			"custom_last_customer_invoice_date",
+			"custom_last_customer_delivery_note",
+			"custom_last_customer_delivery_note_date",
+			"custom_final_customer_feedback_document",
+			"custom_note",
 		],
 		order_by="modified desc",
 		limit=200,
 	)
+	from ultrafreight.ultra_freight.api.transport_dispatch import (
+		get_main_company_invoice_for_delivery_note,
+		sync_main_company_invoice_to_transport_order,
+	)
+
 	for order in orders:
 		order["items"] = frappe.get_all(
 			"Sales Order Item",
@@ -521,6 +539,20 @@ def get_transport_orders(docstatus: str | None = None):
 		raw_status = frappe.db.get_value("Delivery Note", dn, "delivery_status") if dn else None
 		order["delivery_status"] = _normalize_delivery_status(raw_status) if dn else None
 		order["driver"] = frappe.db.get_value("Delivery Note", dn, "driver") if dn else None
+		order["transport_sales_invoice"] = (
+			frappe.db.get_value("Delivery Note", dn, "transport_sales_invoice") if dn else None
+		)
+
+		main_invoice = get_main_company_invoice_for_delivery_note(dn) if dn else None
+		if main_invoice:
+			if order.get("custom_main_company_invoice") != main_invoice["name"]:
+				sync_main_company_invoice_to_transport_order(dn, invoice_name=main_invoice["name"])
+			order["custom_main_company_invoice"] = main_invoice["name"]
+			order["custom_main_company_invoice_date"] = main_invoice["posting_date"]
+		elif order.get("custom_main_company_invoice") and not order.get("custom_main_company_invoice_date"):
+			order["custom_main_company_invoice_date"] = frappe.db.get_value(
+				"Sales Invoice", order["custom_main_company_invoice"], "posting_date"
+			)
 	return orders
 
 
@@ -552,7 +584,15 @@ def get_transport_order(name: str):
 
 
 @frappe.whitelist()
-def update_transport_order(name: str, qty: float | None = None, rate: float | None = None):
+def update_transport_order(
+	name: str,
+	qty: float | None = None,
+	rate: float | None = None,
+	custom_last_customer_invoice: str | None = None,
+	custom_last_customer_invoice_date: str | None = None,
+	custom_last_customer_delivery_note: str | None = None,
+	custom_last_customer_delivery_note_date: str | None = None,
+):
 	_require_login()
 	_ensure_transport_sales_order(name)
 	doc = frappe.get_doc("Sales Order", name)
@@ -568,6 +608,25 @@ def update_transport_order(name: str, qty: float | None = None, rate: float | No
 	if rate is not None:
 		row.rate = flt(rate)
 	row.amount = flt(row.qty) * flt(row.rate)
+
+	# Keep Main Company Invoice in sync from the linked Delivery Note's goods invoice
+	dn_name = doc.get("custom_delivery_note_to_be_transported")
+	if dn_name:
+		from ultrafreight.ultra_freight.api.transport_dispatch import get_main_company_invoice_for_delivery_note
+
+		main_invoice = get_main_company_invoice_for_delivery_note(dn_name)
+		if main_invoice:
+			doc.custom_main_company_invoice = main_invoice["name"]
+			doc.custom_main_company_invoice_date = main_invoice["posting_date"]
+
+	if custom_last_customer_invoice is not None:
+		doc.custom_last_customer_invoice = custom_last_customer_invoice
+	if custom_last_customer_invoice_date is not None:
+		doc.custom_last_customer_invoice_date = custom_last_customer_invoice_date or None
+	if custom_last_customer_delivery_note is not None:
+		doc.custom_last_customer_delivery_note = custom_last_customer_delivery_note
+	if custom_last_customer_delivery_note_date is not None:
+		doc.custom_last_customer_delivery_note_date = custom_last_customer_delivery_note_date or None
 
 	doc.flags.ignore_permissions = True
 	doc.calculate_taxes_and_totals()
@@ -590,6 +649,77 @@ def submit_transport_order(name: str):
 	doc.flags.ignore_permissions = True
 	doc.submit()
 	return {"name": doc.name, "docstatus": doc.docstatus}
+
+
+@frappe.whitelist()
+def create_transport_invoice(
+	name: str,
+	custom_note: str | None = None,
+	custom_final_customer_feedback_document: str | None = None,
+):
+	"""Create transport Sales Invoice from a submitted transport order and mark delivery Completed."""
+	from ultrafreight.ultra_freight.api.notifications import create_confirmation_log
+	from ultrafreight.ultra_freight.api.transport_dispatch import create_transport_sales_invoice_from_order
+
+	_require_login()
+	_ensure_transport_sales_order(name)
+	doc = frappe.get_doc("Sales Order", name)
+	if doc.docstatus != 1:
+		frappe.throw(_("Approve the transport order before creating an invoice"))
+
+	dn_name = doc.get("custom_delivery_note_to_be_transported")
+	if not dn_name:
+		frappe.throw(_("Delivery Note To Be Transported is required"))
+
+	_ensure_transport_delivery_note(dn_name)
+	dn_status = frappe.db.get_value("Delivery Note", dn_name, "delivery_status")
+	if dn_status != "Pending Invoicing":
+		frappe.throw(
+			_("Invoice can only be created when delivery status is Pending Invoicing (current: {0})").format(
+				dn_status or "Open"
+			)
+		)
+
+	existing = frappe.db.get_value("Delivery Note", dn_name, "transport_sales_invoice")
+	if existing:
+		frappe.throw(_("Transport invoice {0} already exists for this delivery").format(existing))
+
+	so_updates = {}
+	if custom_note is not None:
+		so_updates["custom_note"] = custom_note
+	if custom_final_customer_feedback_document is not None:
+		so_updates["custom_final_customer_feedback_document"] = custom_final_customer_feedback_document
+	if so_updates:
+		frappe.db.set_value("Sales Order", name, so_updates, update_modified=True)
+
+	invoice_name = create_transport_sales_invoice_from_order(name)
+	driver_name = frappe.db.get_value("Delivery Note", dn_name, "driver")
+	transport_customer = frappe.db.get_value("Delivery Note", dn_name, "transport_customer")
+
+	create_confirmation_log(
+		delivery_note_name=dn_name,
+		sales_order_name=name,
+		driver_name=driver_name,
+		transport_customer=transport_customer,
+		status="Completed",
+	)
+
+	frappe.db.set_value(
+		"Delivery Note",
+		dn_name,
+		{
+			"delivery_status": "Completed",
+			"transport_sales_invoice": invoice_name,
+		},
+		update_modified=True,
+	)
+
+	return {
+		"name": name,
+		"sales_invoice": invoice_name,
+		"delivery_note": dn_name,
+		"delivery_status": "Completed",
+	}
 
 
 @frappe.whitelist()

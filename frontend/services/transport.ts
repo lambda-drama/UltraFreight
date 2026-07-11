@@ -7,6 +7,7 @@ export interface DashboardStats {
   needs_action?: number
   pending_dispatches: number
   in_transit: number
+  pending_invoicing?: number
   completed?: number
   active_otps: number
   transport_orders: number
@@ -78,6 +79,15 @@ export interface TransportOrderRow {
   currency?: string
   delivery_status?: string
   driver?: string
+  transport_sales_invoice?: string
+  custom_main_company_invoice?: string
+  custom_main_company_invoice_date?: string
+  custom_last_customer_invoice?: string
+  custom_last_customer_invoice_date?: string
+  custom_last_customer_delivery_note?: string
+  custom_last_customer_delivery_note_date?: string
+  custom_final_customer_feedback_document?: string
+  custom_note?: string
   items?: {
     name?: string
     item_code: string
@@ -177,10 +187,20 @@ export function getTransportOrder(name: string) {
   })
 }
 
-export function updateTransportOrder(name: string, qty: number, rate: number) {
+export function updateTransportOrder(
+  name: string,
+  payload: {
+    qty: number
+    rate: number
+    custom_last_customer_invoice?: string
+    custom_last_customer_invoice_date?: string
+    custom_last_customer_delivery_note?: string
+    custom_last_customer_delivery_note_date?: string
+  }
+) {
   return apiRequest(`${API}.update_transport_order`, {
     method: 'POST',
-    body: JSON.stringify({ name, qty, rate }),
+    body: JSON.stringify({ name, ...payload }),
   })
 }
 
@@ -189,6 +209,59 @@ export function submitTransportOrder(name: string) {
     method: 'POST',
     body: JSON.stringify({ name }),
   })
+}
+
+export function createTransportInvoice(
+  name: string,
+  payload?: {
+    custom_note?: string
+    custom_final_customer_feedback_document?: string
+  }
+) {
+  return apiRequest<{ sales_invoice: string; delivery_status: string }>(`${API}.create_transport_invoice`, {
+    method: 'POST',
+    body: JSON.stringify({ name, ...payload }),
+  })
+}
+
+export async function uploadAttachedFile(file: File, doctype: string, docname: string, fieldname: string) {
+  const { clearCSRF, ensureCSRF } = await import('./apiClient')
+  const run = async (forceRefresh: boolean) => {
+    const csrf = await ensureCSRF(forceRefresh)
+    const form = new FormData()
+    form.append('file', file)
+    form.append('is_private', '1')
+    form.append('doctype', doctype)
+    form.append('docname', docname)
+    form.append('fieldname', fieldname)
+    const headers: Record<string, string> = { Accept: 'application/json' }
+    if (csrf) headers['X-Frappe-CSRF-Token'] = csrf
+    const response = await fetch('/api/method/upload_file', {
+      method: 'POST',
+      body: form,
+      headers,
+      credentials: 'include',
+    })
+    const resData = (await response.json().catch(() => ({}))) as Record<string, unknown>
+    return { response, resData }
+  }
+
+  let { response, resData } = await run(false)
+  if (!response.ok && (response.status === 403 || response.status === 400)) {
+    clearCSRF()
+    ;({ response, resData } = await run(true))
+  }
+  if (!response.ok) {
+    const message =
+      typeof resData.message === 'string'
+        ? resData.message
+        : (resData.exc_type as string) || 'Upload failed'
+    throw new Error(message)
+  }
+  const message = resData.message as { file_url?: string } | string | undefined
+  if (message && typeof message === 'object' && message.file_url) return message.file_url
+  if (typeof message === 'string') return message
+  throw new Error('Upload succeeded but no file URL was returned')
 }
 
 export function getDrivers(includeInactive = false) {

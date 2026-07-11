@@ -11,6 +11,69 @@ from ultrafreight.ultra_freight.utils.sms_handler import send_transport_sms
 from ultrafreight.ultra_freight.utils.transport_settings import get_transport_settings
 
 
+def get_main_company_invoice_for_delivery_note(delivery_note_name: str) -> dict | None:
+	"""Return the latest submitted Sales Invoice created from this Delivery Note (goods invoice)."""
+	if not delivery_note_name:
+		return None
+
+	rows = frappe.db.sql(
+		"""
+		SELECT si.name, si.posting_date
+		FROM `tabSales Invoice` si
+		INNER JOIN `tabSales Invoice Item` sii ON sii.parent = si.name
+		WHERE sii.delivery_note = %s
+			AND si.docstatus = 1
+			AND IFNULL(si.is_return, 0) = 0
+		GROUP BY si.name
+		ORDER BY si.posting_date DESC, si.creation DESC
+		LIMIT 1
+		""",
+		delivery_note_name,
+		as_dict=True,
+	)
+	return rows[0] if rows else None
+
+
+def sync_main_company_invoice_to_transport_order(delivery_note_name: str, invoice_name: str | None = None):
+	"""Set Main Company Invoice on the draft/submitted transport SO linked to this DN."""
+	if not delivery_note_name:
+		return
+
+	invoice = None
+	if invoice_name:
+		posting_date = frappe.db.get_value("Sales Invoice", invoice_name, "posting_date")
+		if posting_date:
+			invoice = {"name": invoice_name, "posting_date": posting_date}
+	else:
+		invoice = get_main_company_invoice_for_delivery_note(delivery_note_name)
+
+	if not invoice:
+		return
+
+	transport_so = frappe.db.get_value("Delivery Note", delivery_note_name, "transport_sales_order")
+	if not transport_so:
+		transport_so = frappe.db.get_value(
+			"Sales Order",
+			{
+				"custom_is_transport_order": 1,
+				"custom_delivery_note_to_be_transported": delivery_note_name,
+			},
+			"name",
+		)
+	if not transport_so:
+		return
+
+	frappe.db.set_value(
+		"Sales Order",
+		transport_so,
+		{
+			"custom_main_company_invoice": invoice["name"],
+			"custom_main_company_invoice_date": invoice["posting_date"],
+		},
+		update_modified=False,
+	)
+
+
 def create_transport_sales_order(delivery_note_name: str) -> str:
 	doc = frappe.get_doc("Delivery Note", delivery_note_name)
 	settings = get_transport_settings()
@@ -67,13 +130,19 @@ def create_transport_sales_order(delivery_note_name: str) -> str:
 			).format(company, original_goods_order)
 		)
 
+	so_values = {
+		"custom_is_transport_order": 1,
+		"custom_delivery_note_to_be_transported": doc.name,
+	}
+	main_invoice = get_main_company_invoice_for_delivery_note(doc.name)
+	if main_invoice:
+		so_values["custom_main_company_invoice"] = main_invoice["name"]
+		so_values["custom_main_company_invoice_date"] = main_invoice["posting_date"]
+
 	frappe.db.set_value(
 		"Sales Order",
 		so.name,
-		{
-			"custom_is_transport_order": 1,
-			"custom_delivery_note_to_be_transported": doc.name,
-		},
+		so_values,
 		update_modified=False,
 	)
 
@@ -178,7 +247,6 @@ def initiate_transport_on_sales_order_submit(sales_order_name: str):
 	if dn.docstatus != 1:
 		frappe.throw(_("Linked Delivery Note {0} must be submitted").format(dn_name))
 
-	invoice_name = create_transport_sales_invoice_from_order(sales_order_name)
 	otp = setup_delivery_note_otp(dn_name)
 
 	try:
@@ -202,10 +270,7 @@ def initiate_transport_on_sales_order_submit(sales_order_name: str):
 	frappe.db.set_value(
 		"Delivery Note",
 		dn_name,
-		{
-			"delivery_status": "In Transit",
-			"transport_sales_invoice": invoice_name,
-		},
+		{"delivery_status": "In Transit"},
 		update_modified=False,
 	)
 

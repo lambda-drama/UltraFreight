@@ -52,6 +52,16 @@ fixtures = [
 					"Driver-unique_key",
 					"Driver-vehicle_number",
 					"Driver-transport_company",
+					"Sales Order-custom_last_customer_delivery_note_date",
+					"Sales Order-custom_last_customer_delivery_note",
+					"Sales Order-custom_last_customer_invoice_date",
+					"Sales Order-custom_last_customer_invoice",
+					"Sales Order-custom_main_company_invoice_date",
+					"Sales Order-custom_main_company_invoice",
+     "Sales Order-custom_main_company_invoice_date",
+     "Sales Order-custom_note",
+     "Sales Order-custom_final_customer_feedback_document",
+     
 				),
 			]
 		],
@@ -196,6 +206,9 @@ doc_events = {
 		"before_insert": "ultrafreight.ultra_freight.custom.driver_hooks.ensure_driver_unique_key",
 		"before_save": "ultrafreight.ultra_freight.custom.driver_hooks.ensure_driver_unique_key",
 		"validate": "ultrafreight.ultra_freight.custom.driver_hooks.validate_driver",
+	},
+	"Sales Invoice": {
+		"on_submit": "ultrafreight.ultra_freight.custom.sales_invoice_hooks.sync_main_company_invoice_on_submit",
 	},
 }
 

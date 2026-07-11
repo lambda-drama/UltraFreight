@@ -1,14 +1,25 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import useSWR from 'swr'
 import { getConfirmationLogs, type ConfirmationLogRow } from '@/services/transport'
 import { Badge, Card, CardContent, DataTable, PageHeader } from '@/components/ui/primitives'
+import { FilterToolbar, matchesDateRange } from '@/components/layout/filter-toolbar'
 import { formatDate } from '@/lib/utils'
 import { Loader2 } from 'lucide-react'
 
+const STATUS_OPTIONS = [
+  { value: '', label: 'All statuses' },
+  { value: 'Open', label: 'Open' },
+  { value: 'In Transit', label: 'In Transit' },
+  { value: 'Pending Invoicing', label: 'Pending Invoicing' },
+  { value: 'Completed', label: 'Completed' },
+  { value: 'Failed', label: 'Failed' },
+]
+
 function statusVariant(status?: string) {
   if (status === 'Completed') return 'success'
+  if (status === 'Pending Invoicing') return 'warning'
   if (status === 'Partially Delivered') return 'warning'
   if (status === 'In Transit') return 'warning'
   if (status === 'Open') return 'muted'
@@ -32,6 +43,17 @@ function LogItems({ items }: { items: ConfirmationLogRow['items'] }) {
 export default function ConfirmationLogsPage() {
   const { data, isLoading } = useSWR('confirmation-logs', () => getConfirmationLogs())
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [status, setStatus] = useState('')
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
+
+  const rows = useMemo(() => {
+    return (data || []).filter((row) => {
+      if (status && row.status !== status) return false
+      if (!matchesDateRange(row.confirmation_time, fromDate, toDate)) return false
+      return true
+    })
+  }, [data, status, fromDate, toDate])
 
   return (
     <div>
@@ -39,11 +61,39 @@ export default function ConfirmationLogsPage() {
         title="Confirmation Logs"
         description="Track delivery status changes and driver completion records"
       />
+
+      <FilterToolbar
+        fields={[
+          {
+            key: 'status',
+            label: 'Status',
+            type: 'select',
+            value: status,
+            onChange: setStatus,
+            options: STATUS_OPTIONS,
+          },
+          {
+            key: 'from',
+            label: 'From date',
+            type: 'date',
+            value: fromDate,
+            onChange: setFromDate,
+          },
+          {
+            key: 'to',
+            label: 'To date',
+            type: 'date',
+            value: toDate,
+            onChange: setToDate,
+          },
+        ]}
+      />
+
       {isLoading ? (
         <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
       ) : (
         <DataTable
-          rows={(data || []) as Record<string, unknown>[]}
+          rows={rows as unknown as Record<string, unknown>[]}
           columns={[
             { key: 'name', label: 'Log ID' },
             { key: 'delivery_note', label: 'Delivery Note' },
@@ -85,13 +135,13 @@ export default function ConfirmationLogsPage() {
               render: (row) => formatDate(String(row.confirmation_time || '')),
             },
           ]}
-          emptyText="No confirmation logs yet."
+          emptyText="No confirmation logs match these filters."
         />
       )}
-      {expanded && data ? (
+      {expanded && rows.length ? (
         <Card className="mt-4">
           <CardContent className="py-4">
-            {(data as ConfirmationLogRow[])
+            {rows
               .filter((log) => log.name === expanded)
               .map((log) => (
                 <div key={log.name}>

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, LogOut, Moon, Sun, User } from 'lucide-react'
+import { ChevronDown, LogOut, Moon, Sun } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/auth-context'
 import { useTheme } from '@/contexts/theme-context'
@@ -17,7 +17,7 @@ function initials(name?: string) {
 }
 
 export function UserMenu() {
-  const { user, logout } = useAuth()
+  const { user, logout, isLoading } = useAuth()
   const { theme, setTheme } = useTheme()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -29,6 +29,15 @@ export function UserMenu() {
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
+
+  if (isLoading) {
+    return (
+      <div className="flex h-10 items-center gap-2 rounded-full border border-border bg-card py-1.5 pl-1.5 pr-3">
+        <span className="h-8 w-8 animate-pulse rounded-full bg-muted" />
+        <span className="hidden h-3 w-20 animate-pulse rounded bg-muted sm:block" />
+      </div>
+    )
+  }
 
   if (!user) return null
 

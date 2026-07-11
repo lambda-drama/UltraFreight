@@ -21,8 +21,14 @@ export function NotificationsMenu() {
       onClick: () => navigate('dispatches', { filter: 'needs_action' }),
     },
     {
+      label: 'Pending invoicing',
+      detail: `${data?.pending_invoicing ?? 0} deliveries awaiting transport invoice`,
+      show: (data?.pending_invoicing ?? 0) > 0,
+      onClick: () => navigate('transport-orders'),
+    },
+    {
       label: 'Draft transport orders',
-      detail: `${data?.transport_orders ?? 0} awaiting submit`,
+      detail: `${data?.transport_orders ?? 0} awaiting approve`,
       show: (data?.transport_orders ?? 0) > 0,
       onClick: () => navigate('transport-orders'),
     },

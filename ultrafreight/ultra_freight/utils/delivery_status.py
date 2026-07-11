@@ -1,4 +1,4 @@
-DELIVERY_STATUS_OPTIONS = ("Open", "In Transit", "Completed")
+DELIVERY_STATUS_OPTIONS = ("Open", "In Transit", "Pending Invoicing", "Completed")
 
 LEGACY_DELIVERY_STATUS = {
 	"Pending": "In Transit",

@@ -7,13 +7,13 @@ import { Loader2, Package, Truck } from 'lucide-react'
 import { confirmDelivery, getActiveDrivers, verifyDriverOtp, type VerifiedDelivery } from '@/services/driver'
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Input } from '@/components/ui/primitives'
 import { APP_TITLE } from '@/lib/branding'
-import { getTransportPortalUrl } from '@/lib/driver-portal'
 import { useNavigation } from '@/contexts/navigation-context'
 
 type Step = 'login' | 'verify' | 'complete' | 'success'
 
 function statusVariant(status?: string) {
   if (status === 'Completed') return 'success'
+  if (status === 'Pending Invoicing') return 'warning'
   if (status === 'Partially Delivered') return 'warning'
   if (status === 'In Transit') return 'warning'
   return 'muted'
@@ -101,22 +101,14 @@ export default function DriverPortalPage() {
   return (
     <div className="min-h-dvh">
       <div className="mx-auto max-w-lg px-4 py-10">
-        <div className="mb-10 flex items-start justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-secondary/15 ring-1 ring-secondary/30">
-              <Truck className="h-7 w-7 text-secondary" />
-            </div>
-            <div>
-              <div className="font-serif-display text-2xl font-semibold">{APP_TITLE}</div>
-              <div className="text-sm text-muted-foreground">Driver Delivery Portal</div>
-            </div>
+        <div className="mb-10 flex items-start gap-4">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-secondary/15 ring-1 ring-secondary/30">
+            <Truck className="h-7 w-7 text-secondary" />
           </div>
-          <a
-            href={getTransportPortalUrl()}
-            className="shrink-0 text-sm font-medium text-primary hover:text-primary/80"
-          >
-            Transport Portal
-          </a>
+          <div>
+            <div className="font-serif-display text-2xl font-semibold">{APP_TITLE}</div>
+            <div className="text-sm text-muted-foreground">Driver Delivery Portal</div>
+          </div>
         </div>
 
         {step === 'login' || step === 'verify' ? (
@@ -274,7 +266,9 @@ export default function DriverPortalPage() {
                 {resultStatus}
               </Badge>
               <p className="text-lg font-semibold">Delivery recorded</p>
-              <p className="mt-2 text-sm text-muted-foreground">Thank you. You may close this page.</p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Status is Pending Invoicing. The transport company will create the invoice next.
+              </p>
               <Button className="mt-6" onClick={() => window.location.reload()}>
                 Confirm Another Delivery
               </Button>
