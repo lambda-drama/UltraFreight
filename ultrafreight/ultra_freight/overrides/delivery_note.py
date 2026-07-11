@@ -35,26 +35,18 @@ class UltraFreightDeliveryNote(DeliveryNote):
 		self.delivery_status = "Open"
 
 		transport_company = frappe.db.get_single_value("Transport Settings", "ultra_transport_company")
-		portal_url = get_url(
-			frappe.db.get_single_value("Transport Settings", "driver_portal_url") or "/driver"
-		)
 		so_link = get_url(f"/app/sales-order/{transport_sales_order}")
 		frappe.msgprint(
 			_(
 				"<b>New Transport Sales Order (Draft):</b> <a href='{0}' target='_blank'>{1}</a><br>"
 				"<b>Transport Company:</b> {2}<br>"
 				"<b>Goods Sales Order:</b> {3}<br>"
-				"<b>Status:</b> Open<br><br>"
-				"This is a separate order under the transport company. "
-				"Open it to adjust quantity or amount, then submit to initiate dispatch (In Transit + OTP). "
-				"Email/SMS notifications are sent only when configured. Driver portal: "
-				"<a href='{4}' target='_blank'>{4}</a>"
+				"<b>Status:</b> Open"
 			).format(
 				so_link,
 				transport_sales_order,
 				transport_company or "",
 				original_goods_order or _("N/A"),
-				portal_url,
 			),
 			title=_("Ultra Dispatch — Draft Transport Order Created"),
 			indicator="blue",

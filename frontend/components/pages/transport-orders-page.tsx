@@ -1,22 +1,49 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import useSWR from 'swr'
 import { toast } from 'sonner'
 import {
   assignDispatchDriver,
+  createTransportInvoice,
   getDrivers,
   getTransportOrders,
   submitTransportOrder,
   updateTransportOrder,
+  uploadAttachedFile,
   type TransportOrderRow,
 } from '@/services/transport'
-import { Badge, Button, DataTable, Input, Label, Modal, PageHeader, Select } from '@/components/ui/primitives'
+import { Badge, Button, DataTable, Input, Label, Modal, PageHeader, Select, Textarea } from '@/components/ui/primitives'
+import { FilterToolbar, matchesText } from '@/components/layout/filter-toolbar'
 import { formatMoney, openPrintView } from '@/lib/utils'
-import { CheckCircle2, Loader2, Pencil, Printer } from 'lucide-react'
+import { CheckCircle2, FilePlus2, Loader2, Pencil, Printer } from 'lucide-react'
+
+function statusBadge(status?: string) {
+  if (status === 'Completed') return 'success'
+  if (status === 'Pending Invoicing') return 'warning'
+  if (status === 'In Transit') return 'warning'
+  if (status === 'Open') return 'muted'
+  return 'default'
+}
+
+const DELIVERY_STATUS_OPTIONS = [
+  { value: '', label: 'All delivery statuses' },
+  { value: 'Open', label: 'Open' },
+  { value: 'In Transit', label: 'In Transit' },
+  { value: 'Pending Invoicing', label: 'Pending Invoicing' },
+  { value: 'Completed', label: 'Completed' },
+]
+
+const ORDER_STATUS_OPTIONS = [
+  { value: '', label: 'All orders' },
+  { value: '0', label: 'Draft' },
+  { value: '1', label: 'Submitted' },
+]
 
 export default function TransportOrdersPage() {
   const [docstatusFilter, setDocstatusFilter] = useState('')
+  const [customer, setCustomer] = useState('')
+  const [deliveryStatus, setDeliveryStatus] = useState('')
   const { data, isLoading, mutate } = useSWR(['transport-orders', docstatusFilter], () =>
     getTransportOrders(docstatusFilter)
   )
@@ -25,9 +52,25 @@ export default function TransportOrdersPage() {
   const [qty, setQty] = useState('1')
   const [rate, setRate] = useState('0')
   const [driver, setDriver] = useState('')
+  const [lastCustomerInvoice, setLastCustomerInvoice] = useState('')
+  const [lastCustomerInvoiceDate, setLastCustomerInvoiceDate] = useState('')
+  const [lastCustomerDn, setLastCustomerDn] = useState('')
+  const [lastCustomerDnDate, setLastCustomerDnDate] = useState('')
   const [saving, setSaving] = useState(false)
   const [approving, setApproving] = useState<string | null>(null)
+  const [invoicing, setInvoicing] = useState<string | null>(null)
   const [approveOrder, setApproveOrder] = useState<TransportOrderRow | null>(null)
+  const [invoiceOrder, setInvoiceOrder] = useState<TransportOrderRow | null>(null)
+  const [invoiceNote, setInvoiceNote] = useState('')
+  const [invoiceFile, setInvoiceFile] = useState<File | null>(null)
+
+  const rows = useMemo(() => {
+    return (data || []).filter((order) => {
+      if (!matchesText(order.customer_name || '', customer)) return false
+      if (deliveryStatus && order.delivery_status !== deliveryStatus) return false
+      return true
+    })
+  }, [data, customer, deliveryStatus])
 
   function driverLabel(name?: string) {
     if (!name) return 'Not assigned'
@@ -41,6 +84,10 @@ export default function TransportOrdersPage() {
     setQty(String(item?.qty ?? 1))
     setRate(String(item?.rate ?? 0))
     setDriver(order.driver || '')
+    setLastCustomerInvoice(order.custom_last_customer_invoice || '')
+    setLastCustomerInvoiceDate(order.custom_last_customer_invoice_date || '')
+    setLastCustomerDn(order.custom_last_customer_delivery_note || '')
+    setLastCustomerDnDate(order.custom_last_customer_delivery_note_date || '')
   }
 
   function openApprove(order: TransportOrderRow) {
@@ -57,7 +104,14 @@ export default function TransportOrdersPage() {
     if (!editing) return
     setSaving(true)
     try {
-      await updateTransportOrder(editing.name, Number(qty), Number(rate))
+      await updateTransportOrder(editing.name, {
+        qty: Number(qty),
+        rate: Number(rate),
+        custom_last_customer_invoice: lastCustomerInvoice,
+        custom_last_customer_invoice_date: lastCustomerInvoiceDate,
+        custom_last_customer_delivery_note: lastCustomerDn,
+        custom_last_customer_delivery_note_date: lastCustomerDnDate,
+      })
       const dn = editing.custom_delivery_note_to_be_transported
       if (dn && driver) {
         await assignDispatchDriver(dn, driver)
@@ -90,25 +144,83 @@ export default function TransportOrdersPage() {
     }
   }
 
+  function openCreateInvoice(order: TransportOrderRow) {
+    setInvoiceOrder(order)
+    setInvoiceNote(order.custom_note || '')
+    setInvoiceFile(null)
+  }
+
+  async function handleCreateInvoice() {
+    if (!invoiceOrder) return
+    setInvoicing(invoiceOrder.name)
+    try {
+      let fileUrl = invoiceOrder.custom_final_customer_feedback_document || ''
+      if (invoiceFile) {
+        fileUrl = await uploadAttachedFile(
+          invoiceFile,
+          'Sales Order',
+          invoiceOrder.name,
+          'custom_final_customer_feedback_document'
+        )
+      }
+      const result = await createTransportInvoice(invoiceOrder.name, {
+        custom_note: invoiceNote,
+        custom_final_customer_feedback_document: fileUrl || undefined,
+      })
+      toast.success(`Invoice ${result.sales_invoice} created — delivery Completed`)
+      setInvoiceOrder(null)
+      setInvoiceNote('')
+      setInvoiceFile(null)
+      mutate()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not create invoice')
+    } finally {
+      setInvoicing(null)
+    }
+  }
+
   return (
     <div>
       <PageHeader
         title="Transport Orders"
-        description="Review draft orders, assign a driver, adjust the charge, then approve to dispatch"
-        action={
-          <Select value={docstatusFilter} onChange={(e) => setDocstatusFilter(e.target.value)} className="w-40">
-            <option value="">All Orders</option>
-            <option value="0">Draft</option>
-            <option value="1">Submitted</option>
-          </Select>
-        }
+        description="Assign driver and customer invoice refs, approve to dispatch, then create the transport invoice after delivery"
+      />
+
+      <FilterToolbar
+        fields={[
+          {
+            key: 'customer',
+            label: 'Customer',
+            type: 'text',
+            value: customer,
+            onChange: setCustomer,
+            placeholder: 'Search customer…',
+          },
+          {
+            key: 'delivery_status',
+            label: 'Delivery status',
+            type: 'select',
+            value: deliveryStatus,
+            onChange: setDeliveryStatus,
+            options: DELIVERY_STATUS_OPTIONS,
+          },
+          {
+            key: 'docstatus',
+            label: 'Order status',
+            type: 'select',
+            value: docstatusFilter,
+            onChange: setDocstatusFilter,
+            options: ORDER_STATUS_OPTIONS,
+          },
+        ]}
       />
 
       {isLoading ? (
         <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
       ) : (
         <DataTable
-          rows={(data || []) as Record<string, unknown>[]}
+          rows={rows as unknown as Record<string, unknown>[]}
+          emptyText="No transport orders match these filters."
           columns={[
             { key: 'name', label: 'Sales Order' },
             { key: 'custom_delivery_note_to_be_transported', label: 'Delivery Note' },
@@ -125,7 +237,11 @@ export default function TransportOrdersPage() {
             {
               key: 'delivery_status',
               label: 'Delivery Status',
-              render: (row) => <Badge>{String(row.delivery_status || '—')}</Badge>,
+              render: (row) => (
+                <Badge variant={statusBadge(String(row.delivery_status || ''))}>
+                  {String(row.delivery_status || '—')}
+                </Badge>
+              ),
             },
             {
               key: 'driver',
@@ -147,6 +263,7 @@ export default function TransportOrdersPage() {
               render: (row) => {
                 const order = row as TransportOrderRow
                 const hasDriver = Boolean(order.driver)
+                const pendingInvoice = order.delivery_status === 'Pending Invoicing'
                 return (
                   <div className="flex flex-wrap items-center gap-2">
                     <Button
@@ -184,8 +301,30 @@ export default function TransportOrdersPage() {
                           )}
                         </Button>
                       </>
+                    ) : pendingInvoice ? (
+                      <Button
+                        onClick={() => openCreateInvoice(order)}
+                        disabled={invoicing === order.name}
+                      >
+                        {invoicing === order.name ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <>
+                            <FilePlus2 className="mr-2 h-4 w-4" />
+                            Create Invoice
+                          </>
+                        )}
+                      </Button>
+                    ) : order.transport_sales_invoice ? (
+                      <Button
+                        variant="outline"
+                        onClick={() => openPrintView('Sales Invoice', order.transport_sales_invoice!)}
+                      >
+                        <Printer className="mr-2 h-4 w-4" />
+                        Invoice
+                      </Button>
                     ) : (
-                      <span className="text-xs text-muted-foreground">Approved and dispatched</span>
+                      <span className="text-xs text-muted-foreground">In transit</span>
                     )}
                   </div>
                 )
@@ -222,6 +361,59 @@ export default function TransportOrdersPage() {
           <div className="rounded-lg bg-muted/50 px-3 py-2 text-sm">
             Estimated total: {formatMoney(Number(qty || 0) * Number(rate || 0), editing?.currency)}
           </div>
+
+          <div className="border-t border-border pt-4">
+            <p className="mb-3 text-sm font-medium">Customer & company references</p>
+            <div className="space-y-3">
+              <div className="grid gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm">
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted-foreground">Main Company Invoice</span>
+                  <span className="font-medium text-right">
+                    {editing?.custom_main_company_invoice || 'Not created yet'}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted-foreground">Invoice Date</span>
+                  <span className="font-medium">
+                    {editing?.custom_main_company_invoice_date || '—'}
+                  </span>
+                </div>
+              </div>
+              <div>
+                <Label>Final Customer Invoice</Label>
+                <Input
+                  value={lastCustomerInvoice}
+                  onChange={(e) => setLastCustomerInvoice(e.target.value)}
+                  placeholder="External invoice number"
+                />
+              </div>
+              <div>
+                <Label>Final Customer Invoice Date</Label>
+                <Input
+                  type="date"
+                  value={lastCustomerInvoiceDate}
+                  onChange={(e) => setLastCustomerInvoiceDate(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label>Final Customer Delivery Note</Label>
+                <Input
+                  value={lastCustomerDn}
+                  onChange={(e) => setLastCustomerDn(e.target.value)}
+                  placeholder="External delivery note number"
+                />
+              </div>
+              <div>
+                <Label>Final Customer Delivery Note Date</Label>
+                <Input
+                  type="date"
+                  value={lastCustomerDnDate}
+                  onChange={(e) => setLastCustomerDnDate(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
             <Button type="submit" disabled={saving}>
@@ -270,10 +462,6 @@ export default function TransportOrdersPage() {
               <ul className="space-y-2 text-sm text-muted-foreground">
                 <li className="flex items-start gap-2">
                   <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-secondary" />
-                  Transport invoice is created and submitted
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-secondary" />
                   OTP is generated for driver confirmation
                 </li>
                 <li className="flex items-start gap-2">
@@ -283,6 +471,10 @@ export default function TransportOrdersPage() {
                 <li className="flex items-start gap-2">
                   <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-secondary" />
                   Delivery status moves to <span className="font-medium text-foreground">In Transit</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-secondary" />
+                  Transport invoice is created later after delivery confirmation
                 </li>
               </ul>
             </div>
@@ -298,6 +490,104 @@ export default function TransportOrdersPage() {
                   <>
                     <CheckCircle2 className="mr-2 h-4 w-4" />
                     Approve
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+
+      <Modal
+        open={!!invoiceOrder}
+        title="Create Transport Invoice"
+        onClose={() => {
+          if (invoicing) return
+          setInvoiceOrder(null)
+          setInvoiceNote('')
+          setInvoiceFile(null)
+        }}
+      >
+        {invoiceOrder ? (
+          <div className="space-y-5">
+            <div className="flex items-start gap-4 rounded-2xl bg-secondary/10 p-4 ring-1 ring-secondary/20">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-secondary/15 text-secondary">
+                <FilePlus2 className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="font-medium text-foreground">Create transport sales invoice?</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  This will invoice {invoiceOrder.name} and set delivery to Completed.
+                </p>
+              </div>
+            </div>
+            <div className="grid gap-2 rounded-2xl border border-border bg-muted/30 p-4 text-sm">
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Transport order</span>
+                <span className="font-medium">{invoiceOrder.name}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Delivery note</span>
+                <span className="font-medium">{invoiceOrder.custom_delivery_note_to_be_transported}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Charge</span>
+                <span className="font-medium">{formatMoney(Number(invoiceOrder.grand_total || 0), invoiceOrder.currency)}</span>
+              </div>
+            </div>
+
+            <div className="space-y-3 border-t border-border pt-4">
+              <p className="text-sm font-medium">Customer feedback</p>
+              <div>
+                <Label>Final Customer Feedback Document</Label>
+                <Input
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.xls,.xlsx,.txt"
+                  onChange={(e) => setInvoiceFile(e.target.files?.[0] || null)}
+                  disabled={!!invoicing}
+                />
+                {invoiceFile ? (
+                  <p className="mt-1 text-xs text-muted-foreground">Selected: {invoiceFile.name}</p>
+                ) : invoiceOrder.custom_final_customer_feedback_document ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Existing: {invoiceOrder.custom_final_customer_feedback_document}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-xs text-muted-foreground">Optional — attach signed POD or feedback</p>
+                )}
+              </div>
+              <div>
+                <Label>Note</Label>
+                <Textarea
+                  value={invoiceNote}
+                  onChange={(e) => setInvoiceNote(e.target.value)}
+                  placeholder="Customer feedback or delivery notes…"
+                  rows={3}
+                  disabled={!!invoicing}
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setInvoiceOrder(null)
+                  setInvoiceNote('')
+                  setInvoiceFile(null)
+                }}
+                disabled={!!invoicing}
+              >
+                Cancel
+              </Button>
+              <Button type="button" onClick={handleCreateInvoice} disabled={!!invoicing}>
+                {invoicing === invoiceOrder.name ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <FilePlus2 className="mr-2 h-4 w-4" />
+                    Create Invoice
                   </>
                 )}
               </Button>

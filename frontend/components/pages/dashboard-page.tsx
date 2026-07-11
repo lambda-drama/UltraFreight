@@ -6,12 +6,13 @@ import { Card, CardContent, CardHeader, CardTitle, TextLink } from '@/components
 import { CustomerInvoiceBars, DonutSummary, MonthlyInvoiceChart } from '@/components/dashboard/mini-charts'
 import { useNavigation } from '@/contexts/navigation-context'
 import { formatMoney } from '@/lib/utils'
-import { Loader2, Truck, KeyRound, FileText, Receipt, Users, CheckCircle2, AlertCircle, DollarSign } from 'lucide-react'
+import { Loader2, Truck, KeyRound, FileText, Receipt, Users, CheckCircle2, AlertCircle, DollarSign, FileClock } from 'lucide-react'
 
 const primaryCards = [
-  { key: 'needs_action', label: 'Needs action', sub: 'Open orders & draft transport SOs', icon: AlertCircle, accent: 'text-warning' },
-  { key: 'in_transit', label: 'In transit', sub: 'Active deliveries on the road', icon: Truck, accent: 'text-primary' },
-  { key: 'completed', label: 'Completed', sub: 'Delivered this period', icon: CheckCircle2, accent: 'text-success' },
+  { key: 'needs_action', label: 'Needs action', sub: 'Open orders & draft transport SOs', icon: AlertCircle, accent: 'text-warning', filter: 'needs_action' },
+  { key: 'in_transit', label: 'In transit', sub: 'Active deliveries on the road', icon: Truck, accent: 'text-primary', filter: 'in_transit' },
+  { key: 'pending_invoicing', label: 'Pending invoicing', sub: 'Delivered — create transport invoice', icon: FileClock, accent: 'text-warning', filter: 'pending_invoicing' },
+  { key: 'completed', label: 'Completed', sub: 'Invoiced and closed', icon: CheckCircle2, accent: 'text-success', filter: 'completed' },
 ] as const
 
 const secondaryCards = [
@@ -116,8 +117,8 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
 
-          <div className="grid gap-4 lg:grid-cols-3">
-            {primaryCards.map(({ key, label, sub, icon: Icon, accent }) => (
+          <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+            {primaryCards.map(({ key, label, sub, icon: Icon, accent, filter }) => (
               <Card key={key}>
                 <CardHeader className="flex flex-row items-start justify-between pb-2">
                   <div>
@@ -126,8 +127,8 @@ export default function DashboardPage() {
                   </div>
                   <TextLink
                     onClick={() =>
-                      navigate('dispatches', {
-                        filter: key === 'needs_action' ? 'needs_action' : key === 'in_transit' ? 'in_transit' : 'completed',
+                      navigate(key === 'pending_invoicing' ? 'transport-orders' : 'dispatches', {
+                        filter,
                       })
                     }
                   >

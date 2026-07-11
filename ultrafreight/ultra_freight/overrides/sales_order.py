@@ -96,7 +96,6 @@ class UltraFreightSalesOrder(SalesOrder):
 			return
 
 		otp = frappe.db.get_value("Delivery Note", dn_name, "otp")
-		invoice = frappe.db.get_value("Delivery Note", dn_name, "transport_sales_invoice")
 		portal_url = get_url(
 			frappe.db.get_single_value("Transport Settings", "driver_portal_url") or "/driver"
 		)
@@ -105,15 +104,13 @@ class UltraFreightSalesOrder(SalesOrder):
 		frappe.msgprint(
 			_(
 				"<b>Delivery Note:</b> {0}<br>"
-				"<b>Transport Invoice:</b> {1}<br>"
-				"<b>OTP:</b> {2}<br>"
-				"<b>Expires:</b> {3}<br><br>"
-				"Transport invoice created and all parties notified. "
-				"Share the OTP with the driver at "
-				"<a href='{4}' target='_blank'>{4}</a>"
+				"<b>OTP:</b> {1}<br>"
+				"<b>Expires:</b> {2}<br><br>"
+				"Dispatch is In Transit. Create the transport invoice later from the Transport Portal "
+				"after delivery is confirmed. Share the OTP with the driver at "
+				"<a href='{3}' target='_blank'>{3}</a>"
 			).format(
 				dn_name,
-				invoice or "",
 				otp or "",
 				format_datetime(expires_at) if expires_at else "",
 				portal_url,

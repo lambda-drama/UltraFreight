@@ -31,8 +31,8 @@ export function Header({ onMenuClick }: { onMenuClick?: () => void }) {
         <h1 className="font-serif-display text-lg font-semibold text-foreground">{pageTitle}</h1>
       </div>
       <div className="flex items-center gap-2">
-        <NotificationsMenu />
         <UserMenu />
+        <NotificationsMenu />
       </div>
     </header>
   )

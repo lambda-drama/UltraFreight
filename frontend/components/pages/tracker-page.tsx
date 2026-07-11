@@ -20,12 +20,14 @@ import { formatDate } from '@/lib/utils'
 const STATUS_OPTIONS = [
   { value: 'In Transit', label: 'In Transit' },
   { value: 'Open', label: 'Open' },
+  { value: 'Pending Invoicing', label: 'Pending Invoicing' },
   { value: 'completed', label: 'Completed' },
   { value: 'all', label: 'All statuses' },
 ]
 
 function statusVariant(status?: string) {
   if (status === 'Completed') return 'success'
+  if (status === 'Pending Invoicing') return 'warning'
   if (status === 'Partially Delivered') return 'warning'
   if (status === 'In Transit') return 'warning'
   if (status === 'Open') return 'muted'
