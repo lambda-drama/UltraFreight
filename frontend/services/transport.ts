@@ -80,6 +80,10 @@ export interface TransportOrderRow {
   delivery_status?: string
   driver?: string
   transport_sales_invoice?: string
+  otp?: string
+  otp_expires_at?: string
+  otp_expired?: boolean
+  otp_missing?: boolean
   custom_main_company_invoice?: string
   custom_main_company_invoice_date?: string
   custom_last_customer_invoice?: string
@@ -211,6 +215,20 @@ export function submitTransportOrder(name: string) {
   })
 }
 
+export function regenerateTransportOtp(name: string) {
+  return apiRequest<{
+    sales_order: string
+    delivery_note: string
+    otp: string
+    otp_expires_at?: string
+    was_missing?: boolean
+    was_expired?: boolean
+  }>(`${API}.regenerate_transport_otp`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
+}
+
 export function createTransportInvoice(
   name: string,
   payload?: {
@@ -308,6 +326,36 @@ export function getActiveOtps() {
 
 export function getTransportInvoices() {
   return apiRequest<Record<string, unknown>[]>(`${API}.get_transport_invoices`)
+}
+
+export function getPaymentModes() {
+  return apiRequest<{ name: string; type?: string }[]>(`${API}.get_payment_modes`)
+}
+
+export function getPortalPrintDefaults(doctype?: string) {
+  return apiRequest<{
+    print_format: string
+    letter_head?: string | null
+  }>(`${API}.get_portal_print_defaults`, {
+    method: 'POST',
+    body: JSON.stringify({ doctype: doctype || '' }),
+  })
+}
+
+export function createTransportPayment(
+  salesInvoice: string,
+  payload: { mode_of_payment: string; paid_amount: number }
+) {
+  return apiRequest<{
+    payment_entry: string
+    sales_invoice: string
+    paid_amount?: number
+    mode_of_payment?: string
+    currency?: string
+  }>(`${API}.create_transport_payment`, {
+    method: 'POST',
+    body: JSON.stringify({ sales_invoice: salesInvoice, ...payload }),
+  })
 }
 
 export function getConfirmationLogs(deliveryNote?: string) {

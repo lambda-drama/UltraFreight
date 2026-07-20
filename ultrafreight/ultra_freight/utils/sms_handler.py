@@ -14,7 +14,7 @@ def send_transport_sms(
 	event: str | None = None,
 	recipient_label: str | None = None,
 ) -> None:
-	"""Send SMS using configured provider and log each attempt on the delivery note."""
+	"""Send SMS when configured; otherwise skip quietly so workflows are never blocked."""
 	settings = get_transport_settings()
 	numbers = [_format_phone(number, settings.get("default_country_code")) for number in receiver_list]
 	numbers = [n for n in numbers if n]
@@ -33,18 +33,29 @@ def send_transport_sms(
 		return
 
 	if not settings.get("enable_sms"):
-		for number in numbers:
-			if delivery_note and party and event:
-				create_delivery_sms_log(
-					delivery_note=delivery_note,
-					party=party,
-					event=event,
-					message=message,
-					recipient=number,
-					recipient_label=recipient_label,
-					status="Disabled",
-					error=_("SMS is disabled in Transport Settings"),
-				)
+		_log_skip_for_numbers(
+			numbers,
+			message,
+			delivery_note=delivery_note,
+			party=party,
+			event=event,
+			recipient_label=recipient_label,
+			status="Disabled",
+			error=_("SMS is disabled in Transport Settings"),
+		)
+		return
+
+	if not _is_sms_configured(settings):
+		_log_skip_for_numbers(
+			numbers,
+			message,
+			delivery_note=delivery_note,
+			party=party,
+			event=event,
+			recipient_label=recipient_label,
+			status="Skipped",
+			error=_("SMS Settings not configured yet"),
+		)
 		return
 
 	provider = settings.get("sms_provider")
@@ -79,6 +90,43 @@ def send_transport_sms(
 					status="Failed",
 					error=error.splitlines()[-1] if error else _("SMS send failed"),
 				)
+
+
+def _is_sms_configured(settings: dict) -> bool:
+	"""True only when a usable SMS gateway is set up."""
+	provider = (settings.get("sms_provider") or "").strip()
+	if provider and provider not in ("Frappe SMS Settings",):
+		# Custom provider selected — need URL or API key at minimum
+		if settings.get("sms_api_url") or settings.get("sms_api_key"):
+			return True
+	# Default / Frappe SMS Settings path
+	return bool(frappe.db.get_single_value("SMS Settings", "sms_gateway_url"))
+
+
+def _log_skip_for_numbers(
+	numbers: list[str],
+	message: str,
+	*,
+	delivery_note: str | None,
+	party: str | None,
+	event: str | None,
+	recipient_label: str | None,
+	status: str,
+	error: str,
+) -> None:
+	if not (delivery_note and party and event):
+		return
+	for number in numbers:
+		create_delivery_sms_log(
+			delivery_note=delivery_note,
+			party=party,
+			event=event,
+			message=message,
+			recipient=number,
+			recipient_label=recipient_label,
+			status=status,
+			error=error,
+		)
 
 
 def _format_phone(phone: str, country_code: str | None) -> str:

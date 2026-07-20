@@ -1,15 +1,16 @@
+import { forwardRef } from 'react'
 import { cn } from '@/lib/utils'
 import { ArrowUpRight } from 'lucide-react'
 
 type ButtonVariant = 'default' | 'outline' | 'ghost' | 'silent' | 'soft' | 'destructive'
 
-export function Button({
-  className,
-  variant = 'default',
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }) {
+export const Button = forwardRef<
+  HTMLButtonElement,
+  React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }
+>(function Button({ className, variant = 'default', ...props }, ref) {
   return (
     <button
+      ref={ref}
       className={cn(
         'inline-flex items-center justify-center rounded-full px-4 py-2 text-sm font-medium transition-all duration-200 disabled:opacity-45 disabled:pointer-events-none',
         variant === 'default' &&
@@ -29,7 +30,7 @@ export function Button({
       {...props}
     />
   )
-}
+})
 
 export function TextLink({
   className,
@@ -178,21 +179,20 @@ export function Badge({
 }
 
 export function PageHeader({
-  title,
+  title: _title,
   description,
   action,
 }: {
-  title: string
+  title?: string
   description?: string
   action?: React.ReactNode
 }) {
+  // Title lives in the top navbar — avoid repeating it on the page.
+  if (!description && !action) return null
+
   return (
-    <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-      <div>
-        <p className="section-label mb-2">Overview</p>
-        <h1 className="font-serif-display text-3xl font-semibold tracking-tight text-foreground">{title}</h1>
-        {description ? <p className="mt-2 max-w-2xl text-sm text-muted-foreground">{description}</p> : null}
-      </div>
+    <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      {description ? <p className="max-w-2xl text-sm text-muted-foreground">{description}</p> : <div />}
       {action}
     </div>
   )

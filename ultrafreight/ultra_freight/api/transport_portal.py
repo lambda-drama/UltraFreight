@@ -536,12 +536,28 @@ def get_transport_orders(docstatus: str | None = None):
 			fields=["name", "item_code", "item_name", "qty", "rate", "amount", "uom"],
 		)
 		dn = order.get("custom_delivery_note_to_be_transported")
-		raw_status = frappe.db.get_value("Delivery Note", dn, "delivery_status") if dn else None
-		order["delivery_status"] = _normalize_delivery_status(raw_status) if dn else None
-		order["driver"] = frappe.db.get_value("Delivery Note", dn, "driver") if dn else None
-		order["transport_sales_invoice"] = (
-			frappe.db.get_value("Delivery Note", dn, "transport_sales_invoice") if dn else None
+		dn_values = (
+			frappe.db.get_value(
+				"Delivery Note",
+				dn,
+				["delivery_status", "driver", "transport_sales_invoice", "otp", "otp_expires_at"],
+				as_dict=True,
+			)
+			if dn
+			else None
 		)
+		raw_status = dn_values.delivery_status if dn_values else None
+		order["delivery_status"] = _normalize_delivery_status(raw_status) if dn else None
+		order["driver"] = dn_values.driver if dn_values else None
+		order["transport_sales_invoice"] = dn_values.transport_sales_invoice if dn_values else None
+		order["otp"] = dn_values.otp if dn_values else None
+		order["otp_expires_at"] = dn_values.otp_expires_at if dn_values else None
+		order["otp_expired"] = bool(
+			dn_values
+			and dn_values.otp_expires_at
+			and now_datetime() > dn_values.otp_expires_at
+		)
+		order["otp_missing"] = bool(dn and not (dn_values and dn_values.otp))
 
 		main_invoice = get_main_company_invoice_for_delivery_note(dn) if dn else None
 		if main_invoice:
@@ -649,6 +665,17 @@ def submit_transport_order(name: str):
 	doc.flags.ignore_permissions = True
 	doc.submit()
 	return {"name": doc.name, "docstatus": doc.docstatus}
+
+
+@frappe.whitelist()
+def regenerate_transport_otp(name: str):
+	"""Regenerate OTP for an approved transport order (missing or expired)."""
+	from ultrafreight.ultra_freight.api.transport_dispatch import regenerate_otp_for_transport_order
+
+	_require_login()
+	_ensure_transport_sales_order(name)
+	result = regenerate_otp_for_transport_order(name, notify=True)
+	return result
 
 
 @frappe.whitelist()
@@ -894,6 +921,7 @@ def get_active_otps():
 			"otp_generated_at",
 			"otp_expires_at",
 			"delivery_status",
+			"transport_sales_order",
 		],
 		order_by="otp_generated_at desc",
 		limit=100,
@@ -919,10 +947,152 @@ def get_transport_invoices():
 	return frappe.get_all(
 		"Sales Invoice",
 		filters={"name": ("in", invoice_names)},
-		fields=["name", "customer", "customer_name", "posting_date", "grand_total", "status", "docstatus", "currency"],
+		fields=[
+			"name",
+			"customer",
+			"customer_name",
+			"posting_date",
+			"grand_total",
+			"outstanding_amount",
+			"status",
+			"docstatus",
+			"currency",
+		],
 		order_by="posting_date desc",
 		limit=100,
 	)
+
+
+@frappe.whitelist()
+def get_portal_print_defaults(doctype: str | None = None):
+	"""Defaults from Transport Settings for direct portal printing."""
+	_require_login()
+	settings = get_transport_settings()
+	print_format = settings.get("default_print_format")
+	letter_head = settings.get("default_letter_head")
+
+	if doctype and print_format and print_format != "Standard":
+		pf_doctype = frappe.db.get_value("Print Format", print_format, "doc_type")
+		if pf_doctype and pf_doctype != doctype:
+			# Settings format is for another DocType — fall back to that doctype's default
+			print_format = frappe.get_meta(doctype).default_print_format or "Standard"
+	elif doctype and not print_format:
+		print_format = frappe.get_meta(doctype).default_print_format or "Standard"
+
+	return {
+		"print_format": print_format or "Standard",
+		"letter_head": letter_head,
+	}
+
+
+@frappe.whitelist()
+def get_payment_modes():
+	"""Modes of Payment available for the transport company."""
+	_require_login()
+	company = _transport_company()
+	modes = frappe.get_all(
+		"Mode of Payment",
+		filters={"enabled": 1},
+		fields=["name", "type"],
+		order_by="name asc",
+	)
+	if not company:
+		return modes
+
+	# Prefer modes that have an account mapped for this company
+	mapped = {
+		row.parent
+		for row in frappe.get_all(
+			"Mode of Payment Account",
+			filters={"company": company},
+			fields=["parent"],
+		)
+	}
+	if mapped:
+		return [m for m in modes if m.name in mapped] or modes
+	return modes
+
+
+@frappe.whitelist()
+def create_transport_payment(
+	sales_invoice: str,
+	mode_of_payment: str | None = None,
+	paid_amount: float | None = None,
+):
+	"""Create and submit a Payment Entry against a transport Sales Invoice."""
+	from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
+
+	from ultrafreight.ultra_freight.api.transport_dispatch import _apply_transport_accounting_dimensions
+
+	_require_login()
+	if not sales_invoice or not frappe.db.exists("Sales Invoice", sales_invoice):
+		frappe.throw(_("Sales Invoice not found"))
+	if not mode_of_payment:
+		frappe.throw(_("Payment method is required"))
+
+	linked = frappe.db.exists(
+		"Delivery Note",
+		{**_dispatch_filters(), "transport_sales_invoice": sales_invoice},
+	)
+	if not linked:
+		frappe.throw(_("This invoice is not a transport invoice for your company"))
+
+	si = frappe.get_doc("Sales Invoice", sales_invoice)
+	if si.docstatus != 1:
+		frappe.throw(_("Invoice must be submitted before creating a payment"))
+
+	outstanding = flt(si.outstanding_amount)
+	if outstanding <= 0:
+		frappe.throw(_("Invoice {0} has no outstanding amount").format(sales_invoice))
+
+	amount = flt(paid_amount if paid_amount is not None else outstanding)
+	if amount <= 0:
+		frappe.throw(_("Paid amount must be greater than zero"))
+	if amount > outstanding:
+		frappe.throw(
+			_("Paid amount cannot exceed outstanding amount {0}").format(
+				frappe.format(outstanding, {"fieldtype": "Currency", "options": si.currency})
+			)
+		)
+
+	if not frappe.db.exists("Mode of Payment", mode_of_payment):
+		frappe.throw(_("Invalid payment method {0}").format(mode_of_payment))
+
+	account = frappe.db.get_value(
+		"Mode of Payment Account",
+		{"parent": mode_of_payment, "company": si.company},
+		"default_account",
+	)
+	if not account:
+		frappe.throw(
+			_("Set a default account for Mode of Payment {0} on company {1}").format(
+				mode_of_payment, si.company
+			)
+		)
+
+	pe = get_payment_entry("Sales Invoice", sales_invoice, bank_account=account)
+	pe.mode_of_payment = mode_of_payment
+	pe.paid_amount = amount
+	pe.received_amount = amount
+	if pe.payment_type == "Receive":
+		pe.paid_to = account
+	else:
+		pe.paid_from = account
+
+	for ref in pe.get("references") or []:
+		ref.allocated_amount = min(flt(ref.outstanding_amount) or amount, amount)
+
+	_apply_transport_accounting_dimensions(pe)
+	pe.flags.ignore_permissions = True
+	pe.insert()
+	pe.submit()
+	return {
+		"payment_entry": pe.name,
+		"sales_invoice": sales_invoice,
+		"paid_amount": pe.paid_amount,
+		"mode_of_payment": pe.mode_of_payment,
+		"currency": pe.paid_to_account_currency or pe.paid_from_account_currency or si.currency,
+	}
 
 
 @frappe.whitelist()

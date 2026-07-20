@@ -1,3 +1,5 @@
+"""Legacy /driver-confirmation → Driver Portal (/driver)."""
+
 import frappe
 
 no_cache = 1

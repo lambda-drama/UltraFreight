@@ -28,8 +28,8 @@ fixtures = [
 					"Sales Order-transport_column_break",
 					"Sales Order-driver",
 					"Sales Order-expected_delivery_date",
-					"Sales Order-transport_charge",
-					"Sales Order-transport_charge_order_section",
+					# "Sales Order-transport_charge",
+					# "Sales Order-transport_charge_order_section",
 					"Sales Order-custom_is_transport_order",
 					"Sales Order-custom_delivery_note_to_be_transported",
 					"Delivery Note-transport_dispatch_section",
@@ -52,15 +52,20 @@ fixtures = [
 					"Driver-unique_key",
 					"Driver-vehicle_number",
 					"Driver-transport_company",
+     
+     		# Sales Order Custom Fields
 					"Sales Order-custom_last_customer_delivery_note_date",
 					"Sales Order-custom_last_customer_delivery_note",
 					"Sales Order-custom_last_customer_invoice_date",
 					"Sales Order-custom_last_customer_invoice",
 					"Sales Order-custom_main_company_invoice_date",
 					"Sales Order-custom_main_company_invoice",
-     "Sales Order-custom_main_company_invoice_date",
-     "Sales Order-custom_note",
-     "Sales Order-custom_final_customer_feedback_document",
+					"Sales Order-custom_main_company_invoice_date",
+					"Sales Order-custom_note",
+					"Sales Order-custom_final_customer_feedback_document",
+					"Sales Order-is_transport_charge_order",
+					"Sales Order-custom_last_customer_invoice",
+
      
 				),
 			]
@@ -84,6 +89,7 @@ website_route_rules = [
 	{"from_route": "/transport/<path:app_path>", "to_route": "transport_frontend"},
 	{"from_route": "/driver", "to_route": "driver"},
 	{"from_route": "/driver/<path:app_path>", "to_route": "driver"},
+	# Legacy SMS/email links → Driver Portal
 	{"from_route": "/driver-confirmation", "to_route": "driver-confirmation"},
 ]
 
