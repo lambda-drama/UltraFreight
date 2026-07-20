@@ -1,13 +1,34 @@
 'use client'
 
+import { useState } from 'react'
 import useSWR from 'swr'
-import { getActiveOtps } from '@/services/transport'
-import { Badge, DataTable, PageHeader } from '@/components/ui/primitives'
+import { toast } from 'sonner'
+import { getActiveOtps, regenerateTransportOtp } from '@/services/transport'
+import { Badge, Button, DataTable, PageHeader } from '@/components/ui/primitives'
 import { formatDate } from '@/lib/utils'
-import { Loader2 } from 'lucide-react'
+import { KeyRound, Loader2 } from 'lucide-react'
 
 export default function OtpsPage() {
-  const { data, isLoading } = useSWR('active-otps', getActiveOtps)
+  const { data, isLoading, mutate } = useSWR('active-otps', getActiveOtps)
+  const [regenerating, setRegenerating] = useState<string | null>(null)
+
+  async function handleRegenerate(row: Record<string, unknown>) {
+    const salesOrder = String(row.transport_sales_order || '')
+    if (!salesOrder) {
+      toast.error('No transport order linked to this delivery')
+      return
+    }
+    setRegenerating(String(row.name))
+    try {
+      const result = await regenerateTransportOtp(salesOrder)
+      toast.success(`New OTP: ${result.otp}`)
+      mutate()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not regenerate OTP')
+    } finally {
+      setRegenerating(null)
+    }
+  }
 
   return (
     <div>
@@ -34,6 +55,27 @@ export default function OtpsPage() {
               ),
             },
             { key: 'delivery_status', label: 'Status' },
+            {
+              key: 'actions',
+              label: 'Actions',
+              render: (row) => (
+                <Button
+                  variant={row.is_expired ? 'default' : 'outline'}
+                  disabled={regenerating === String(row.name) || !row.transport_sales_order}
+                  onClick={() => handleRegenerate(row)}
+                  title="Regenerate OTP"
+                >
+                  {regenerating === String(row.name) ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <>
+                      <KeyRound className="mr-2 h-4 w-4" />
+                      Regenerate
+                    </>
+                  )}
+                </Button>
+              ),
+            },
           ]}
         />
       )}

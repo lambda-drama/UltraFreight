@@ -1,10 +1,10 @@
 import frappe
 from frappe import _
-from frappe.utils import get_url, now_datetime
+from frappe.utils import now_datetime
 
 from ultrafreight.ultra_freight.utils.email_handler import format_delivery_note_email, send_transport_email
 from ultrafreight.ultra_freight.utils.sms_handler import send_transport_sms
-from ultrafreight.ultra_freight.utils.transport_settings import get_transport_settings
+from ultrafreight.ultra_freight.utils.transport_settings import get_driver_portal_url, get_transport_settings
 
 
 def notify_goods_ready(delivery_note_name: str):
@@ -53,8 +53,7 @@ def notify_on_the_way(delivery_note_name: str):
 		recipient_label=doc.get("transport_customer_name"),
 	)
 
-	portal_path = get_transport_settings().get("driver_portal_url") or "/driver"
-	portal_link = get_url(portal_path)
+	portal_link = get_driver_portal_url()
 	email_body = format_delivery_note_email(
 		doc,
 		_(
@@ -78,8 +77,7 @@ def notify_driver_arrival(delivery_note_name: str):
 		return
 
 	driver = frappe.get_doc("Driver", doc.driver)
-	portal_path = get_transport_settings().get("driver_portal_url") or "/driver"
-	portal_link = get_url(f"{portal_path}?driver={driver.name}&key={driver.unique_key}")
+	portal_link = get_driver_portal_url(f"driver={driver.name}&key={driver.unique_key}")
 	sms_message = _("Confirm your delivery here: {0}").format(portal_link)
 	send_transport_sms(
 		[driver.cell_number],

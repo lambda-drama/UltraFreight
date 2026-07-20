@@ -8,15 +8,17 @@ import {
   createTransportInvoice,
   getDrivers,
   getTransportOrders,
+  regenerateTransportOtp,
   submitTransportOrder,
   updateTransportOrder,
   uploadAttachedFile,
   type TransportOrderRow,
 } from '@/services/transport'
 import { Badge, Button, DataTable, Input, Label, Modal, PageHeader, Select, Textarea } from '@/components/ui/primitives'
+import { ActionMenu, type ActionMenuItem } from '@/components/ui/action-menu'
 import { FilterToolbar, matchesText } from '@/components/layout/filter-toolbar'
 import { formatMoney, openPrintView } from '@/lib/utils'
-import { CheckCircle2, FilePlus2, Loader2, Pencil, Printer } from 'lucide-react'
+import { CheckCircle2, FilePlus2, KeyRound, Loader2, Pencil, Printer } from 'lucide-react'
 
 function statusBadge(status?: string) {
   if (status === 'Completed') return 'success'
@@ -59,6 +61,7 @@ export default function TransportOrdersPage() {
   const [saving, setSaving] = useState(false)
   const [approving, setApproving] = useState<string | null>(null)
   const [invoicing, setInvoicing] = useState<string | null>(null)
+  const [regeneratingOtp, setRegeneratingOtp] = useState<string | null>(null)
   const [approveOrder, setApproveOrder] = useState<TransportOrderRow | null>(null)
   const [invoiceOrder, setInvoiceOrder] = useState<TransportOrderRow | null>(null)
   const [invoiceNote, setInvoiceNote] = useState('')
@@ -141,6 +144,23 @@ export default function TransportOrdersPage() {
       toast.error(err instanceof Error ? err.message : 'Could not approve order')
     } finally {
       setApproving(null)
+    }
+  }
+
+  async function handleRegenerateOtp(order: TransportOrderRow) {
+    if (!order.driver) {
+      toast.error('Assign a driver before regenerating the OTP')
+      return
+    }
+    setRegeneratingOtp(order.name)
+    try {
+      const result = await regenerateTransportOtp(order.name)
+      toast.success(`New OTP: ${result.otp}`)
+      mutate()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not regenerate OTP')
+    } finally {
+      setRegeneratingOtp(null)
     }
   }
 
@@ -261,71 +281,116 @@ export default function TransportOrdersPage() {
               key: 'actions',
               label: 'Actions',
               render: (row) => {
-                const order = row as TransportOrderRow
+                const order = row as unknown as TransportOrderRow
                 const hasDriver = Boolean(order.driver)
+                const isDraft = Number(order.docstatus) === 0
+                const isSubmitted = Number(order.docstatus) === 1
                 const pendingInvoice = order.delivery_status === 'Pending Invoicing'
+                const completed = order.delivery_status === 'Completed' || Boolean(order.transport_sales_invoice)
+                const canRegenerateOtp =
+                  isSubmitted &&
+                  hasDriver &&
+                  order.delivery_status !== 'Pending Invoicing' &&
+                  order.delivery_status !== 'Completed'
+                const needsOtp = Boolean(order.otp_missing || order.otp_expired)
+                const busy =
+                  approving === order.name ||
+                  invoicing === order.name ||
+                  regeneratingOtp === order.name
+
+                const menuItems: ActionMenuItem[] = []
+
+                if (isDraft) {
+                  menuItems.push({
+                    key: 'edit',
+                    label: 'Edit & assign driver',
+                    icon: <Pencil className="h-4 w-4" />,
+                    onClick: () => openEdit(order),
+                  })
+                  menuItems.push({
+                    key: 'approve',
+                    label: hasDriver ? 'Approve order' : 'Assign driver to approve',
+                    icon:
+                      approving === order.name ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="h-4 w-4" />
+                      ),
+                    disabled: !hasDriver || approving === order.name,
+                    onClick: () => openApprove(order),
+                  })
+                }
+
+                if (isSubmitted && pendingInvoice) {
+                  menuItems.push({
+                    key: 'invoice',
+                    label: invoicing === order.name ? 'Creating invoice…' : 'Create invoice',
+                    icon:
+                      invoicing === order.name ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <FilePlus2 className="h-4 w-4" />
+                      ),
+                    disabled: invoicing === order.name,
+                    onClick: () => openCreateInvoice(order),
+                  })
+                }
+
+                if (order.transport_sales_invoice) {
+                  menuItems.push({
+                    key: 'print-invoice',
+                    label: 'Print transport invoice',
+                    icon: <Printer className="h-4 w-4" />,
+                    onClick: () => openPrintView('Sales Invoice', order.transport_sales_invoice!),
+                  })
+                }
+
+                if (canRegenerateOtp) {
+                  menuItems.push({
+                    key: 'regenerate-otp',
+                    label:
+                      regeneratingOtp === order.name
+                        ? 'Regenerating OTP…'
+                        : needsOtp
+                          ? order.otp_missing
+                            ? 'Generate OTP'
+                            : 'Regenerate expired OTP'
+                          : 'Regenerate OTP',
+                    icon:
+                      regeneratingOtp === order.name ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <KeyRound className="h-4 w-4" />
+                      ),
+                    disabled: regeneratingOtp === order.name,
+                    onClick: () => handleRegenerateOtp(order),
+                  })
+                }
+
+                if (!menuItems.length && completed) {
+                  menuItems.push({
+                    key: 'done',
+                    label: 'Delivery completed',
+                    icon: <CheckCircle2 className="h-4 w-4" />,
+                    disabled: true,
+                    onClick: () => {},
+                  })
+                }
+
                 return (
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center justify-end gap-1.5">
+                    <ActionMenu items={menuItems} label={`Actions for ${order.name}`} />
                     <Button
+                      type="button"
                       variant="outline"
                       className="h-9 w-9 p-0"
                       title="Print transport order"
                       aria-label="Print transport order"
+                      disabled={busy}
                       onClick={() => openPrintView('Sales Order', order.name)}
                     >
                       <Printer className="h-4 w-4" />
                     </Button>
-                    {Number(row.docstatus) === 0 ? (
-                      <>
-                        <Button
-                          variant="outline"
-                          className="h-9 w-9 p-0"
-                          title="Edit order & assign driver"
-                          aria-label="Edit order and assign driver"
-                          onClick={() => openEdit(order)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          onClick={() => openApprove(order)}
-                          disabled={approving === order.name || !hasDriver}
-                          title={hasDriver ? 'Approve order' : 'Assign a driver to approve'}
-                        >
-                          {approving === order.name ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <>
-                              <CheckCircle2 className="mr-2 h-4 w-4" />
-                              Approve
-                            </>
-                          )}
-                        </Button>
-                      </>
-                    ) : pendingInvoice ? (
-                      <Button
-                        onClick={() => openCreateInvoice(order)}
-                        disabled={invoicing === order.name}
-                      >
-                        {invoicing === order.name ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <>
-                            <FilePlus2 className="mr-2 h-4 w-4" />
-                            Create Invoice
-                          </>
-                        )}
-                      </Button>
-                    ) : order.transport_sales_invoice ? (
-                      <Button
-                        variant="outline"
-                        onClick={() => openPrintView('Sales Invoice', order.transport_sales_invoice!)}
-                      >
-                        <Printer className="mr-2 h-4 w-4" />
-                        Invoice
-                      </Button>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">In transit</span>
-                    )}
                   </div>
                 )
               },
@@ -380,7 +445,7 @@ export default function TransportOrdersPage() {
                 </div>
               </div>
               <div>
-                <Label>Final Customer Invoice</Label>
+                <Label>Transport Customer Invoice</Label>
                 <Input
                   value={lastCustomerInvoice}
                   onChange={(e) => setLastCustomerInvoice(e.target.value)}
@@ -388,7 +453,7 @@ export default function TransportOrdersPage() {
                 />
               </div>
               <div>
-                <Label>Final Customer Invoice Date</Label>
+                <Label>Transport Customer Invoice Date</Label>
                 <Input
                   type="date"
                   value={lastCustomerInvoiceDate}
@@ -396,7 +461,7 @@ export default function TransportOrdersPage() {
                 />
               </div>
               <div>
-                <Label>Final Customer Delivery Note</Label>
+                <Label>Transport Customer Delivery Note</Label>
                 <Input
                   value={lastCustomerDn}
                   onChange={(e) => setLastCustomerDn(e.target.value)}
@@ -404,7 +469,7 @@ export default function TransportOrdersPage() {
                 />
               </div>
               <div>
-                <Label>Final Customer Delivery Note Date</Label>
+                <Label>Transport Customer Delivery Note Date</Label>
                 <Input
                   type="date"
                   value={lastCustomerDnDate}
@@ -539,7 +604,7 @@ export default function TransportOrdersPage() {
             <div className="space-y-3 border-t border-border pt-4">
               <p className="text-sm font-medium">Customer feedback</p>
               <div>
-                <Label>Final Customer Feedback Document</Label>
+                <Label>Transport Customer Feedback Document</Label>
                 <Input
                   type="file"
                   accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.xls,.xlsx,.txt"

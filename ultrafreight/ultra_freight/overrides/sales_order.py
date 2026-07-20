@@ -1,6 +1,6 @@
 import frappe
 from frappe import _
-from frappe.utils import format_datetime, get_url
+from frappe.utils import format_datetime
 
 from erpnext.selling.doctype.sales_order.sales_order import SalesOrder
 
@@ -12,7 +12,7 @@ from ultrafreight.ultra_freight.utils.transport_customer import (
 	find_or_create_transport_customer,
 	sync_transport_customer_fields,
 )
-from ultrafreight.ultra_freight.utils.transport_settings import get_transport_settings
+from ultrafreight.ultra_freight.utils.transport_settings import get_driver_portal_url, get_transport_settings
 
 
 class UltraFreightSalesOrder(SalesOrder):
@@ -70,8 +70,8 @@ class UltraFreightSalesOrder(SalesOrder):
 			return
 		if not self.get("transport_customer_name") or not self.get("transport_phone"):
 			frappe.throw(_("Transport Customer Name and Phone are required when direct delivery is enabled"))
-		if not self.get("driver"):
-			frappe.throw(_("Driver is required when direct delivery is enabled"))
+		# if not self.get("driver"):
+		# 	frappe.throw(_("Driver is required when direct delivery is enabled"))
 
 	def handle_transport_customer(self):
 		if self.get("custom_is_transport_order") or not self.get("require_direct_delivery"):
@@ -96,9 +96,7 @@ class UltraFreightSalesOrder(SalesOrder):
 			return
 
 		otp = frappe.db.get_value("Delivery Note", dn_name, "otp")
-		portal_url = get_url(
-			frappe.db.get_single_value("Transport Settings", "driver_portal_url") or "/driver"
-		)
+		portal_url = get_driver_portal_url()
 		expires_at = frappe.db.get_value("Delivery Note", dn_name, "otp_expires_at")
 
 		frappe.msgprint(

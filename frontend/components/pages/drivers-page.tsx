@@ -85,7 +85,7 @@ export default function DriversPage() {
   async function handleRegenerateKey(name: string) {
     try {
       const result = await regenerateDriverKey(name)
-      toast.success(`New portal key: ${result.unique_key}`)
+      toast.success(`New PIN: ${result.unique_key}`)
       mutate()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Action failed')
@@ -132,7 +132,7 @@ export default function DriversPage() {
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted/30 px-4 py-3 text-sm">
         <div>
           <p className="font-medium text-foreground">Driver portal</p>
-          <p className="text-muted-foreground">Drivers use this link to enter their key and confirm deliveries with OTP.</p>
+          <p className="text-muted-foreground">Drivers use this link with their 4-digit PIN and OTP to confirm deliveries.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <code className="rounded-lg bg-card px-3 py-1.5 text-xs">{driverPortalUrl}</code>
@@ -159,7 +159,7 @@ export default function DriversPage() {
                 <Badge variant={row.status === 'Active' ? 'success' : 'muted'}>{String(row.status || '—')}</Badge>
               ),
             },
-            { key: 'unique_key', label: 'Portal Key' },
+            { key: 'unique_key', label: 'PIN' },
             {
               key: 'actions',
               label: 'Actions',
@@ -176,7 +176,7 @@ export default function DriversPage() {
                   </Button>
                   <Button variant="outline" onClick={() => handleRegenerateKey(String(row.name))}>
                     <RefreshCw className="mr-1 h-3 w-3" />
-                    New Key
+                    New PIN
                   </Button>
                   {row.status === 'Active' ? (
                     <Button variant="destructive" onClick={() => handleDeactivate(String(row.name))}>

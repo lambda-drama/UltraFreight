@@ -1,6 +1,6 @@
 import frappe
 from frappe import _
-from frappe.utils import add_to_date, flt, format_datetime, get_url, now_datetime
+from frappe.utils import add_to_date, flt, format_datetime, now_datetime
 
 from erpnext.controllers.accounts_controller import get_taxes_and_charges
 from erpnext.selling.doctype.sales_order.sales_order import make_sales_invoice
@@ -8,7 +8,7 @@ from erpnext.selling.doctype.sales_order.sales_order import make_sales_invoice
 from ultrafreight.ultra_freight.api.notifications import create_confirmation_log, notify_on_the_way
 from ultrafreight.ultra_freight.utils.otp_generator import generate_otp, get_otp_expiry_minutes
 from ultrafreight.ultra_freight.utils.sms_handler import send_transport_sms
-from ultrafreight.ultra_freight.utils.transport_settings import get_transport_settings
+from ultrafreight.ultra_freight.utils.transport_settings import get_driver_portal_url, get_transport_settings
 
 
 def get_main_company_invoice_for_delivery_note(delivery_note_name: str) -> dict | None:
@@ -109,13 +109,9 @@ def create_transport_sales_order(delivery_note_name: str) -> str:
 	so.delivery_date = frappe.utils.today()
 	so.currency = frappe.db.get_value("Company", company, "default_currency")
 	so.conversion_rate = 1
-	so.taxes_and_charges = taxes_and_charges
 
 	_append_transport_service_item(so, transport_item, transport_charge, doc.name, original_goods_order)
-
-	if taxes_and_charges:
-		for tax in get_taxes_and_charges("Sales Taxes and Charges Template", taxes_and_charges):
-			so.append("taxes", tax)
+	_apply_transport_taxes(so, taxes_and_charges, company)
 
 	so.flags.creating_transport_sales_order = True
 	so.flags.ignore_pricing_rule = True
@@ -276,25 +272,107 @@ def initiate_transport_on_sales_order_submit(sales_order_name: str):
 
 
 def create_transport_sales_invoice_from_order(transport_sales_order_name: str) -> str:
+	from erpnext.stock.doctype.delivery_note.delivery_note import (
+		make_sales_invoice as make_sales_invoice_from_dn,
+	)
+
 	so = frappe.get_doc("Sales Order", transport_sales_order_name)
 	settings = get_transport_settings()
 	transport_item = settings.get("default_transport_item")
-	dn_name = so.custom_delivery_note_to_be_transported
+	goods_dn_name = so.custom_delivery_note_to_be_transported
 
 	if not transport_item:
 		frappe.throw(_("Set Default Transport Service Item in Transport Settings"))
 
 	_validate_transport_order_items(so, transport_item)
 
-	existing_invoice = frappe.db.get_value("Delivery Note", dn_name, "transport_sales_invoice")
+	existing_invoice = (
+		frappe.db.get_value("Delivery Note", goods_dn_name, "transport_sales_invoice") if goods_dn_name else None
+	)
 	if existing_invoice:
 		return existing_invoice
 
-	si = make_sales_invoice(transport_sales_order_name)
+	dn_required = frappe.db.get_single_value("Selling Settings", "dn_required") == "Yes"
+
+	if dn_required:
+		transport_dn_name = _get_or_create_transport_delivery_note(transport_sales_order_name, settings)
+		si = make_sales_invoice_from_dn(transport_dn_name)
+	else:
+		si = make_sales_invoice(transport_sales_order_name)
+
 	_validate_transport_order_items(si, transport_item)
+	_apply_transport_accounting_dimensions(si, settings)
 	si.insert(ignore_permissions=True)
 	si.submit()
 	return si.name
+
+
+def _get_or_create_transport_delivery_note(transport_sales_order_name: str, settings: dict | None = None) -> str:
+	"""Create (and submit) a Delivery Note against the transport Sales Order when SI requires DN."""
+	from erpnext.selling.doctype.sales_order.sales_order import make_delivery_note
+
+	existing = frappe.db.sql(
+		"""
+		SELECT dni.parent
+		FROM `tabDelivery Note Item` dni
+		INNER JOIN `tabDelivery Note` dn ON dn.name = dni.parent
+		WHERE dni.against_sales_order = %s
+			AND dn.docstatus = 1
+		ORDER BY dn.creation DESC
+		LIMIT 1
+		""",
+		transport_sales_order_name,
+	)
+	if existing:
+		return existing[0][0]
+
+	draft = frappe.db.sql(
+		"""
+		SELECT dni.parent
+		FROM `tabDelivery Note Item` dni
+		INNER JOIN `tabDelivery Note` dn ON dn.name = dni.parent
+		WHERE dni.against_sales_order = %s
+			AND dn.docstatus = 0
+		ORDER BY dn.creation DESC
+		LIMIT 1
+		""",
+		transport_sales_order_name,
+	)
+	if draft:
+		dn = frappe.get_doc("Delivery Note", draft[0][0])
+	else:
+		dn = make_delivery_note(transport_sales_order_name)
+		_apply_transport_accounting_dimensions(dn, settings)
+		dn.flags.ignore_permissions = True
+		dn.insert(ignore_permissions=True)
+
+	if dn.docstatus == 0:
+		dn.flags.ignore_permissions = True
+		dn.submit()
+
+	return dn.name
+
+
+def _apply_transport_accounting_dimensions(doc, settings: dict | None = None):
+	"""Copy Branch / Cost Center from Transport Settings onto the invoice (and items) when set."""
+	settings = settings or get_transport_settings()
+	branch = settings.get("branch")
+	cost_center = settings.get("cost_center")
+	if not branch and not cost_center:
+		return
+
+	meta = doc.meta
+	if branch and meta.has_field("branch"):
+		doc.set("branch", branch)
+	if cost_center and meta.has_field("cost_center"):
+		doc.set("cost_center", cost_center)
+
+	for item in doc.get("items") or []:
+		item_meta = frappe.get_meta(item.doctype)
+		if branch and item_meta.has_field("branch"):
+			item.set("branch", branch)
+		if cost_center and item_meta.has_field("cost_center"):
+			item.set("cost_center", cost_center)
 
 
 def setup_delivery_note_otp(delivery_note_name: str) -> str:
@@ -316,11 +394,88 @@ def setup_delivery_note_otp(delivery_note_name: str) -> str:
 	return otp
 
 
+def regenerate_otp_for_transport_order(sales_order_name: str, notify: bool = True) -> dict:
+	"""Regenerate delivery OTP when missing or expired after transport order approval."""
+	so = frappe.get_doc("Sales Order", sales_order_name)
+	if not so.get("custom_is_transport_order"):
+		frappe.throw(_("OTP can only be regenerated for transport sales orders"))
+	if so.docstatus != 1:
+		frappe.throw(_("Approve the transport order before generating an OTP"))
+
+	dn_name = so.get("custom_delivery_note_to_be_transported")
+	if not dn_name:
+		frappe.throw(_("Delivery Note To Be Transported is required"))
+
+	dn = frappe.get_doc("Delivery Note", dn_name)
+	if dn.docstatus != 1:
+		frappe.throw(_("Linked Delivery Note {0} must be submitted").format(dn_name))
+	if not dn.get("driver"):
+		frappe.throw(_("Assign a driver before regenerating the OTP"))
+
+	status = dn.get("delivery_status") or "Open"
+	if status in ("Pending Invoicing", "Completed"):
+		frappe.throw(
+			_("Cannot regenerate OTP when delivery status is {0}").format(status)
+		)
+
+	existing_otp = dn.get("otp")
+	expires_at = dn.get("otp_expires_at")
+	is_expired = bool(expires_at and now_datetime() > expires_at)
+
+	otp = setup_delivery_note_otp(dn_name)
+	new_expires_at = frappe.db.get_value("Delivery Note", dn_name, "otp_expires_at")
+
+	if status != "In Transit":
+		frappe.db.set_value(
+			"Delivery Note",
+			dn_name,
+			{"delivery_status": "In Transit"},
+			update_modified=False,
+		)
+
+	# Keep the latest In Transit confirmation log OTP in sync when present
+	latest_log = frappe.db.get_value(
+		"Delivery Confirmation Log",
+		{"delivery_note": dn_name, "status": "In Transit"},
+		"name",
+		order_by="confirmation_time desc",
+	)
+	if latest_log:
+		frappe.db.set_value("Delivery Confirmation Log", latest_log, "otp", otp, update_modified=False)
+	else:
+		create_confirmation_log(
+			delivery_note_name=dn_name,
+			sales_order_name=sales_order_name,
+			driver_name=dn.get("driver"),
+			transport_customer=dn.get("transport_customer"),
+			otp=otp,
+			status="In Transit",
+		)
+
+	if notify:
+		try:
+			notify_transport_initiated(dn_name, sales_order_name, otp)
+			notify_on_the_way(dn_name)
+		except Exception:
+			frappe.log_error(
+				title=_("Ultra Dispatch Notification Failed"),
+				message=frappe.get_traceback(),
+			)
+
+	return {
+		"sales_order": sales_order_name,
+		"delivery_note": dn_name,
+		"otp": otp,
+		"otp_expires_at": new_expires_at,
+		"was_missing": not bool(existing_otp),
+		"was_expired": is_expired,
+	}
+
+
 def notify_transport_initiated(delivery_note_name: str, transport_sales_order_name: str, otp: str):
 	doc = frappe.get_doc("Delivery Note", delivery_note_name)
 	settings = get_transport_settings()
-	portal_path = settings.get("driver_portal_url") or "/driver"
-	portal_link = get_url(portal_path)
+	portal_link = get_driver_portal_url()
 
 	sms_message = _("Transport initiated for DN {0}. OTP: {1}. Driver portal: {2}").format(
 		doc.name, otp, portal_link
@@ -386,6 +541,45 @@ def _get_linked_sales_order(doc) -> str | None:
 		if item.against_sales_order:
 			return item.against_sales_order
 	return None
+
+
+def _apply_transport_taxes(so, taxes_and_charges: str | None, company: str):
+	"""Apply Transport Settings tax template only if it belongs to the transport company."""
+	if not taxes_and_charges:
+		return
+
+	if not frappe.db.exists("Sales Taxes and Charges Template", taxes_and_charges):
+		frappe.throw(
+			_("Sales Taxes Template {0} in Transport Settings was not found").format(taxes_and_charges)
+		)
+
+	template_company = frappe.db.get_value(
+		"Sales Taxes and Charges Template", taxes_and_charges, "company"
+	)
+	if template_company and template_company != company:
+		frappe.throw(
+			_(
+				"Default Sales Taxes Template <b>{0}</b> belongs to company <b>{1}</b>, "
+				"but transport orders are created for <b>{2}</b>. "
+				"In Transport Settings, set Default Sales Taxes Template to a template "
+				"for {2} (or clear it)."
+			).format(taxes_and_charges, template_company, company)
+		)
+
+	so.taxes_and_charges = taxes_and_charges
+	for tax in get_taxes_and_charges("Sales Taxes and Charges Template", taxes_and_charges):
+		account = tax.get("account_head")
+		if account:
+			account_company = frappe.db.get_value("Account", account, "company")
+			if account_company and account_company != company:
+				frappe.throw(
+					_(
+						"Tax account <b>{0}</b> on template <b>{1}</b> belongs to <b>{2}</b>, "
+						"not transport company <b>{3}</b>. "
+						"Fix the template accounts or choose a template for {3} in Transport Settings."
+					).format(account, taxes_and_charges, account_company, company)
+				)
+		so.append("taxes", tax)
 
 
 def _append_transport_service_item(

@@ -4,36 +4,81 @@ from frappe.utils import get_url_to_form
 
 
 def has_outgoing_email_account() -> bool:
+	"""True only when an outgoing Email Account exists and its password can be used."""
 	try:
 		from frappe.email.doctype.email_account.email_account import EmailAccount
 
-		return bool(EmailAccount.find_outgoing(_raise_error=False))
+		account = EmailAccount.find_outgoing(_raise_error=False)
+		if not account:
+			return False
+		# Encryption-key / password problems surface here — treat as "not ready"
+		account.get_password(raise_exception=True)
+		return True
 	except Exception:
+		_clear_email_error_messages()
 		return False
 
 
-def send_transport_email(recipients: list[str], subject: str, message: str, reference_doctype=None, reference_name=None):
+def send_transport_email(
+	recipients: list[str],
+	subject: str,
+	message: str,
+	reference_doctype=None,
+	reference_name=None,
+):
+	"""Queue a transport notification email. Never blocks the business workflow."""
 	recipients = [email for email in recipients if email]
 	if not recipients:
 		return
 
 	if not has_outgoing_email_account():
 		frappe.logger("ultra_dispatch").info(
-			"Skipping transport email to %s — no outgoing Email Account configured", recipients
+			"Skipping transport email to %s — outgoing email not available", recipients
 		)
 		return
 
 	try:
+		# Queue asynchronously so SMTP/decrypt failures cannot fail the request
 		frappe.sendmail(
 			recipients=recipients,
 			subject=subject,
 			message=message,
 			reference_doctype=reference_doctype,
 			reference_name=reference_name,
-			now=True,
+			now=False,
+			delayed=True,
 		)
 	except Exception:
+		_clear_email_error_messages()
 		frappe.log_error(title=_("Ultra Dispatch Email Failed"), message=frappe.get_traceback())
+
+
+def _clear_email_error_messages() -> None:
+	"""Drop ValidationError toast leftovers from failed email probes/sends."""
+	try:
+		if hasattr(frappe, "clear_last_message"):
+			frappe.clear_last_message()
+		message_log = getattr(frappe.local, "message_log", None)
+		if not message_log:
+			return
+		kept = []
+		for entry in message_log:
+			text = str(entry).lower()
+			if any(
+				token in text
+				for token in (
+					"decrypt",
+					"encryption key",
+					"email account",
+					"smtp",
+					"outgoing email",
+				)
+			):
+				continue
+			kept.append(entry)
+		frappe.local.message_log = kept
+	except Exception:
+		pass
 
 
 def format_delivery_note_email(delivery_note, extra_message: str = "") -> str:

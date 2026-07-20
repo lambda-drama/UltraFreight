@@ -139,8 +139,17 @@ export default function DriverPortalPage() {
                   )}
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium">Driver Key</label>
-                  <Input type="password" value={uniqueKey} onChange={(e) => setUniqueKey(e.target.value)} required />
+                  <label className="mb-1 block text-sm font-medium">PIN</label>
+                  <Input
+                    type="password"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    value={uniqueKey}
+                    onChange={(e) => setUniqueKey(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    placeholder="4-digit PIN"
+                    maxLength={4}
+                    required
+                  />
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium">OTP</label>
