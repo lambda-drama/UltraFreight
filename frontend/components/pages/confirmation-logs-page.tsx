@@ -5,8 +5,10 @@ import useSWR from 'swr'
 import { getConfirmationLogs, type ConfirmationLogRow } from '@/services/transport'
 import { Badge, Card, CardContent, DataTable, PageHeader } from '@/components/ui/primitives'
 import { FilterToolbar, matchesDateRange } from '@/components/layout/filter-toolbar'
+import { ListExportActions } from '@/components/ui/list-export-actions'
 import { formatDate } from '@/lib/utils'
 import { Loader2 } from 'lucide-react'
+import type { ListExportColumn } from '@/lib/list-export'
 
 const STATUS_OPTIONS = [
   { value: '', label: 'All statuses' },
@@ -60,6 +62,31 @@ export default function ConfirmationLogsPage() {
       <PageHeader
         title="Confirmation Logs"
         description="Track delivery status changes and driver completion records"
+        action={
+          <ListExportActions
+            title="Confirmation Logs"
+            columns={
+              [
+                { key: 'name', label: 'Log ID' },
+                { key: 'delivery_note', label: 'Delivery Note' },
+                { key: 'driver', label: 'Driver' },
+                { key: 'status', label: 'Status' },
+                { key: 'completion_type', label: 'Completion' },
+                {
+                  key: 'partial_reason',
+                  label: 'Partial Reason',
+                  value: (row) => String(row.partial_reason || ''),
+                },
+                {
+                  key: 'confirmation_time',
+                  label: 'Time',
+                  value: (row) => formatDate(String(row.confirmation_time || '')),
+                },
+              ] satisfies ListExportColumn[]
+            }
+            rows={rows as unknown as Record<string, unknown>[]}
+          />
+        }
       />
 
       <FilterToolbar

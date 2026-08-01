@@ -11,8 +11,10 @@ import {
 import { ActionMenu, type ActionMenuItem } from '@/components/ui/action-menu'
 import { Badge, Button, DataTable, Input, Label, Modal, PageHeader, Select } from '@/components/ui/primitives'
 import { FilterToolbar, matchesDateRange, matchesText } from '@/components/layout/filter-toolbar'
+import { ListExportActions } from '@/components/ui/list-export-actions'
 import { formatMoney, openPrintView } from '@/lib/utils'
 import { Banknote, Loader2, Printer } from 'lucide-react'
+import type { ListExportColumn } from '@/lib/list-export'
 
 const STATUS_OPTIONS = [
   { value: '', label: 'All statuses' },
@@ -115,7 +117,43 @@ export default function InvoicesPage() {
 
   return (
     <div>
-      <PageHeader title="Transport Invoices" description="Sales invoices created from transport orders" />
+      <PageHeader
+        title="Transport Invoices"
+        description="Sales invoices created from transport orders"
+        action={
+          <ListExportActions
+            title="Transport Invoices"
+            columns={
+              [
+                { key: 'name', label: 'Invoice' },
+                {
+                  key: 'customer_name',
+                  label: 'Customer',
+                  value: (row) => String(row.customer_name || row.customer || ''),
+                },
+                {
+                  key: 'posting_date',
+                  label: 'Date',
+                  value: (row) => String(row.posting_date || ''),
+                },
+                { key: 'status', label: 'Status' },
+                {
+                  key: 'grand_total',
+                  label: 'Grand Total',
+                  value: (row) => formatMoney(Number(row.grand_total || 0), String(row.currency || '')),
+                },
+                {
+                  key: 'outstanding_amount',
+                  label: 'Outstanding',
+                  value: (row) =>
+                    formatMoney(Number(row.outstanding_amount || 0), String(row.currency || '')),
+                },
+              ] satisfies ListExportColumn[]
+            }
+            rows={rows as unknown as Record<string, unknown>[]}
+          />
+        }
+      />
 
       <FilterToolbar
         fields={[

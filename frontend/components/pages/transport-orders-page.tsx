@@ -21,7 +21,9 @@ import {
 import { Badge, Button, DataTable, Input, Label, Modal, PageHeader, Select, Textarea } from '@/components/ui/primitives'
 import { ActionMenu, type ActionMenuItem } from '@/components/ui/action-menu'
 import { FilterToolbar, matchesText } from '@/components/layout/filter-toolbar'
+import { ListExportActions } from '@/components/ui/list-export-actions'
 import { formatMoney, openPrintView } from '@/lib/utils'
+import type { ListExportColumn } from '@/lib/list-export'
 import { useAuth } from '@/contexts/auth-context'
 import { Ban, CalendarClock, CheckCircle2, FilePlus2, KeyRound, Loader2, PackageCheck, Pencil, Printer } from 'lucide-react'
 
@@ -348,11 +350,46 @@ export default function TransportOrdersPage() {
     }
   }
 
+  const exportColumns: ListExportColumn[] = [
+    { key: 'name', label: 'Sales Order' },
+    { key: 'custom_delivery_note_to_be_transported', label: 'Delivery Note' },
+    { key: 'customer_name', label: 'Customer' },
+    { key: 'custom_address_zone', label: 'Zone', value: (row) => String(row.custom_address_zone || '') },
+    {
+      key: 'docstatus',
+      label: 'Order Status',
+      value: (row) => (Number(row.docstatus) === 1 ? 'Submitted' : 'Draft'),
+    },
+    { key: 'delivery_status', label: 'Delivery Status' },
+    {
+      key: 'driver',
+      label: 'Driver',
+      value: (row) => driverLabel(String(row.driver || '')),
+    },
+    {
+      key: 'vehicle_no',
+      label: 'Truck',
+      value: (row) => (row.vehicle_no ? vehicleLabel(String(row.vehicle_no)) : ''),
+    },
+    {
+      key: 'grand_total',
+      label: 'Amount',
+      value: (row) => formatMoney(Number(row.grand_total || 0), String(row.currency || '')),
+    },
+  ]
+
   return (
     <div>
       <PageHeader
         title="Transport Orders"
         description="Assign driver and customer invoice refs, approve to dispatch, then create the transport invoice after delivery"
+        action={
+          <ListExportActions
+            title="Transport Orders"
+            columns={exportColumns}
+            rows={rows as unknown as Record<string, unknown>[]}
+          />
+        }
       />
 
       <FilterToolbar

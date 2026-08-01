@@ -5,8 +5,33 @@ import useSWR from 'swr'
 import { toast } from 'sonner'
 import { getActiveOtps, regenerateTransportOtp } from '@/services/transport'
 import { Badge, Button, DataTable, PageHeader } from '@/components/ui/primitives'
+import { ListExportActions } from '@/components/ui/list-export-actions'
 import { formatDate } from '@/lib/utils'
 import { KeyRound, Loader2 } from 'lucide-react'
+import type { ListExportColumn } from '@/lib/list-export'
+
+const EXPORT_COLUMNS: ListExportColumn[] = [
+  { key: 'name', label: 'Delivery Note' },
+  { key: 'transport_customer_name', label: 'Transport Customer' },
+  { key: 'driver', label: 'Driver' },
+  { key: 'otp', label: 'OTP' },
+  {
+    key: 'otp_generated_at',
+    label: 'Generated',
+    value: (row) => formatDate(String(row.otp_generated_at || '')),
+  },
+  {
+    key: 'otp_expires_at',
+    label: 'Expires',
+    value: (row) => formatDate(String(row.otp_expires_at || '')),
+  },
+  {
+    key: 'is_expired',
+    label: 'Valid',
+    value: (row) => (row.is_expired ? 'Expired' : 'Active'),
+  },
+  { key: 'delivery_status', label: 'Status' },
+]
 
 export default function OtpsPage() {
   const { data, isLoading, mutate } = useSWR('active-otps', getActiveOtps)
@@ -30,14 +55,20 @@ export default function OtpsPage() {
     }
   }
 
+  const rows = (data || []) as Record<string, unknown>[]
+
   return (
     <div>
-      <PageHeader title="OTPs" description="Active delivery OTPs for driver confirmation" />
+      <PageHeader
+        title="OTPs"
+        description="Active delivery OTPs for driver confirmation"
+        action={<ListExportActions title="OTPs" columns={EXPORT_COLUMNS} rows={rows} />}
+      />
       {isLoading ? (
         <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
       ) : (
         <DataTable
-          rows={(data || []) as Record<string, unknown>[]}
+          rows={rows}
           columns={[
             { key: 'name', label: 'Delivery Note' },
             { key: 'transport_customer_name', label: 'Transport Customer' },

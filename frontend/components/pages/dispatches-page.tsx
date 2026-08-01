@@ -30,9 +30,10 @@ import {
 } from '@/components/ui/primitives'
 import { useNavigation } from '@/contexts/navigation-context'
 import { FilterToolbar, matchesDateRange, matchesText } from '@/components/layout/filter-toolbar'
+import { ListExportActions } from '@/components/ui/list-export-actions'
 import { ChevronDown, ChevronUp, Loader2, Printer, Search } from 'lucide-react'
-
 import { formatDate, openPrintView } from '@/lib/utils'
+import type { ListExportColumn } from '@/lib/list-export'
 
 const STATUS_FILTERS = [
   { value: '', label: 'All statuses' },
@@ -209,6 +210,32 @@ export default function DispatchesPage() {
       <PageHeader
         title="Delivery Orders"
         description="Filter orders needing action, assign drivers, and track product delivery status"
+        action={
+          <ListExportActions
+            title="Delivery Orders"
+            columns={
+              [
+                { key: 'name', label: 'Delivery Note' },
+                {
+                  key: 'customer',
+                  label: 'Customer',
+                  value: (row) =>
+                    String(row.transport_customer_name || row.customer_name || row.customer || ''),
+                },
+                { key: 'driver', label: 'Driver' },
+                { key: 'vehicle_no', label: 'Truck' },
+                { key: 'delivery_status', label: 'Status' },
+                {
+                  key: 'posting_date',
+                  label: 'Date',
+                  value: (row) => formatDate(String(row.posting_date || '')),
+                },
+                { key: 'sms_status', label: 'SMS Status' },
+              ] satisfies ListExportColumn[]
+            }
+            rows={filteredRows as unknown as Record<string, unknown>[]}
+          />
+        }
       />
 
       <FilterToolbar
