@@ -1,0 +1,70 @@
+{
+ "actions": [],
+ "allow_bulk_edit": 1,
+ "allow_rename": 1,
+ "creation": "2026-08-01 23:28:34.633850",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "zone",
+  "city",
+  "more_information",
+  "transport_charges",
+  "default"
+ ],
+ "fields": [
+  {
+   "fieldname": "zone",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Zone",
+   "options": "Address Zone"
+  },
+  {
+   "fetch_from": "zone.zone_city",
+   "fieldname": "city",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "City"
+  },
+  {
+   "fieldname": "more_information",
+   "fieldtype": "Text Editor",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "More Information"
+  },
+  {
+   "fetch_from": "zone.transport_charges",
+   "fieldname": "transport_charges",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Transport Charges"
+  },
+  {
+   "default": "0",
+   "fieldname": "default",
+   "fieldtype": "Check",
+   "label": "Default"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-01 23:55:57.922423",
+ "modified_by": "Administrator",
+ "module": "Ultra Freight",
+ "name": "Address Zone Detail",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

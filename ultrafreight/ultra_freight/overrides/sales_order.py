@@ -41,7 +41,8 @@ class UltraFreightSalesOrder(SalesOrder):
 	def on_submit(self):
 		super().on_submit()
 		if self.get("custom_is_transport_order"):
-			initiate_transport_on_sales_order_submit(self.name)
+			send_otp = frappe.flags.get("ultrafreight_send_otp")
+			initiate_transport_on_sales_order_submit(self.name, send_otp=send_otp)
 			self.show_transport_initiated_message()
 
 	def validate_transport_order(self):
@@ -99,8 +100,8 @@ class UltraFreightSalesOrder(SalesOrder):
 		portal_url = get_driver_portal_url()
 		expires_at = frappe.db.get_value("Delivery Note", dn_name, "otp_expires_at")
 
-		frappe.msgprint(
-			_(
+		if otp:
+			message = _(
 				"<b>Delivery Note:</b> {0}<br>"
 				"<b>OTP:</b> {1}<br>"
 				"<b>Expires:</b> {2}<br><br>"
@@ -109,10 +110,19 @@ class UltraFreightSalesOrder(SalesOrder):
 				"<a href='{3}' target='_blank'>{3}</a>"
 			).format(
 				dn_name,
-				otp or "",
+				otp,
 				format_datetime(expires_at) if expires_at else "",
 				portal_url,
-			),
+			)
+		else:
+			message = _(
+				"<b>Delivery Note:</b> {0}<br><br>"
+				"Dispatch is In Transit without OTP. Confirm delivery from the Transport Portal "
+				"when the trip is complete, then create the transport invoice."
+			).format(dn_name)
+
+		frappe.msgprint(
+			message,
 			title=_("Ultra Dispatch — Transport Initiated"),
 			indicator="green",
 		)

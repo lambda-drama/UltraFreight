@@ -31,6 +31,7 @@ function toggle_transport_fields(frm) {
 		"transport_charge",
 		"custom_is_transport_order",
 		"custom_delivery_note_to_be_transported",
+		"custom_address_zone",
 	];
 	fields.forEach((field) => frm.toggle_display(field, show || frm.doc.custom_is_transport_order));
 	frm.toggle_reqd("transport_customer_name", show);
@@ -39,6 +40,7 @@ function toggle_transport_fields(frm) {
 
 	if (frm.doc.custom_is_transport_order) {
 		frm.set_df_property("require_direct_delivery", "read_only", 1);
+		frm.toggle_reqd("custom_address_zone", 0);
 	}
 }
 

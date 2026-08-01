@@ -8,6 +8,7 @@ import {
   getDispatchDetail,
   getDispatches,
   getDrivers,
+  getVehicles,
   updateDispatchTransportCustomer,
   type DispatchRow,
   type ItemStatus,
@@ -97,6 +98,7 @@ export default function DispatchesPage() {
   const swrKey = useMemo(() => ['dispatches', filter, search], [filter, search])
   const { data, isLoading, mutate } = useSWR(swrKey, () => getDispatches({ filter: filter || 'all', search }))
   const { data: drivers } = useSWR('active-drivers-list', () => getDrivers(false))
+  const { data: vehicles } = useSWR('vehicles-list', getVehicles)
 
   const filteredRows = useMemo(() => {
     return (data || []).filter((row) => {
@@ -113,6 +115,7 @@ export default function DispatchesPage() {
   const [editRow, setEditRow] = useState<DispatchRow | null>(null)
   const [driverModal, setDriverModal] = useState<DispatchRow | null>(null)
   const [selectedDriver, setSelectedDriver] = useState('')
+  const [selectedVehicle, setSelectedVehicle] = useState('')
   const [editForm, setEditForm] = useState({
     transport_customer_name: '',
     transport_phone: '',
@@ -151,6 +154,18 @@ export default function DispatchesPage() {
   function openAssignDriver(row: DispatchRow) {
     setDriverModal(row)
     setSelectedDriver(row.driver || '')
+    setSelectedVehicle(row.vehicle_no || '')
+  }
+
+  function onDriverSelect(driverName: string) {
+    setSelectedDriver(driverName)
+    const match = (drivers || []).find((d) => d.name === driverName)
+    const preferred = (match?.vehicle_number || '').trim()
+    if (!preferred) return
+    const vehicleMatch = (vehicles || []).find(
+      (v) => v.name === preferred || v.license_plate === preferred
+    )
+    if (vehicleMatch) setSelectedVehicle(vehicleMatch.name)
   }
 
   async function saveCustomer(e: React.FormEvent) {
@@ -172,10 +187,14 @@ export default function DispatchesPage() {
   async function saveDriver(e: React.FormEvent) {
     e.preventDefault()
     if (!driverModal || !selectedDriver) return
+    if (!selectedVehicle) {
+      toast.error('Select a truck')
+      return
+    }
     setSaving(true)
     try {
-      await assignDispatchDriver(driverModal.name, selectedDriver)
-      toast.success('Driver assigned')
+      await assignDispatchDriver(driverModal.name, selectedDriver, selectedVehicle)
+      toast.success('Driver and truck assigned')
       setDriverModal(null)
       mutate()
     } catch (err) {
@@ -259,7 +278,9 @@ export default function DispatchesPage() {
                       ) : null}
                     </CardTitle>
                     <div className="mt-1 text-sm text-muted-foreground">
-                      {row.transport_customer_name || row.customer_name} · Driver: {row.driver || 'Not assigned'}
+                      {row.transport_customer_name || row.customer_name} · Driver:{' '}
+                      {row.driver || 'Not assigned'}
+                      {row.vehicle_no ? ` · Truck: ${row.vehicle_no}` : ''}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -438,16 +459,33 @@ export default function DispatchesPage() {
         <form onSubmit={saveDriver} className="space-y-4">
           <div>
             <Label>Driver</Label>
-            <Select value={selectedDriver} onChange={(e) => setSelectedDriver(e.target.value)} required>
+            <Select value={selectedDriver} onChange={(e) => onDriverSelect(e.target.value)} required>
               <option value="">Select driver</option>
               {(drivers || []).map((d) => (
                 <option key={d.name} value={d.name}>{d.full_name}</option>
               ))}
             </Select>
           </div>
+          <div>
+            <Label>Truck</Label>
+            <Select value={selectedVehicle} onChange={(e) => setSelectedVehicle(e.target.value)} required>
+              <option value="">Select truck</option>
+              {(vehicles || []).map((v) => (
+                <option key={v.name} value={v.name}>
+                  {v.license_plate || v.name}
+                  {v.make || v.model ? ` · ${[v.make, v.model].filter(Boolean).join(' ')}` : ''}
+                </option>
+              ))}
+            </Select>
+            {!(vehicles || []).length ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                No vehicles found. Add trucks under Vehicle in ERPNext.
+              </p>
+            ) : null}
+          </div>
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => setDriverModal(null)}>Cancel</Button>
-            <Button type="submit" disabled={saving}>
+            <Button type="submit" disabled={saving || !selectedVehicle}>
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Assign'}
             </Button>
           </div>

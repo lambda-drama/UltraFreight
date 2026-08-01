@@ -47,6 +47,7 @@ export interface DispatchRow {
   posting_date?: string
   delivery_status?: string
   driver?: string
+  vehicle_no?: string
   transport_customer_name?: string
   transport_phone?: string
   transport_email?: string
@@ -79,6 +80,7 @@ export interface TransportOrderRow {
   currency?: string
   delivery_status?: string
   driver?: string
+  vehicle_no?: string
   transport_sales_invoice?: string
   otp?: string
   otp_expires_at?: string
@@ -92,6 +94,19 @@ export interface TransportOrderRow {
   custom_last_customer_delivery_note_date?: string
   custom_final_customer_feedback_document?: string
   custom_note?: string
+  custom_reschedule_transport_order?: number
+  custom_reason_for_reschedule?: string
+  custom_address_zone?: string
+  transport_customer?: string
+  transport_customer_name?: string
+  send_otp?: number
+  zones?: {
+    name?: string
+    zone: string
+    city?: string
+    transport_charges?: number
+    default?: number
+  }[]
   items?: {
     name?: string
     item_code: string
@@ -155,11 +170,27 @@ export function getDispatchDetail(deliveryNote: string) {
   })
 }
 
-export function assignDispatchDriver(deliveryNote: string, driver: string) {
+export function assignDispatchDriver(deliveryNote: string, driver: string, vehicleNo?: string) {
   return apiRequest(`${API}.assign_dispatch_driver`, {
     method: 'POST',
-    body: JSON.stringify({ delivery_note: deliveryNote, driver }),
+    body: JSON.stringify({
+      delivery_note: deliveryNote,
+      driver,
+      vehicle_no: vehicleNo || '',
+    }),
   })
+}
+
+export function getVehicles() {
+  return apiRequest<VehicleRow[]>(`${API}.get_vehicles`)
+}
+
+export interface VehicleRow {
+  name: string
+  license_plate?: string
+  make?: string
+  model?: string
+  company?: string
 }
 
 export function updateDispatchTransportCustomer(
@@ -196,6 +227,7 @@ export function updateTransportOrder(
   payload: {
     qty: number
     rate: number
+    custom_address_zone?: string
     custom_last_customer_invoice?: string
     custom_last_customer_invoice_date?: string
     custom_last_customer_delivery_note?: string
@@ -208,10 +240,49 @@ export function updateTransportOrder(
   })
 }
 
-export function submitTransportOrder(name: string) {
+export function submitTransportOrder(name: string, sendOtp?: boolean) {
   return apiRequest(`${API}.submit_transport_order`, {
     method: 'POST',
+    body: JSON.stringify({
+      name,
+      send_otp: sendOtp === undefined ? undefined : sendOtp ? 1 : 0,
+    }),
+  })
+}
+
+export function markTransportOrderDelivered(name: string) {
+  return apiRequest<{
+    name: string
+    delivery_note: string
+    delivery_status: string
+    completion_type: string
+    confirmation_log?: string
+  }>(`${API}.mark_transport_order_delivered`, {
+    method: 'POST',
     body: JSON.stringify({ name }),
+  })
+}
+
+export function rescheduleTransportOrder(name: string, reason: string) {
+  return apiRequest<{
+    name: string
+    custom_reschedule_transport_order: number
+    custom_reason_for_reschedule: string
+  }>(`${API}.reschedule_transport_order`, {
+    method: 'POST',
+    body: JSON.stringify({ name, reason }),
+  })
+}
+
+export function cancelTransportOrder(name: string, reason?: string) {
+  return apiRequest<{
+    name: string
+    docstatus: number
+    delivery_status?: string
+    new_transport_order?: string
+  }>(`${API}.cancel_transport_order`, {
+    method: 'POST',
+    body: JSON.stringify({ name, reason: reason || '' }),
   })
 }
 
