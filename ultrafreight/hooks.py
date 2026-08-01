@@ -66,7 +66,11 @@ fixtures = [
 					"Sales Order-is_transport_charge_order",
 					"Sales Order-custom_last_customer_invoice",
 
-     
+					#address
+					"Sales Order-custom_reason_for_reschedule",
+					"Sales Order-custom_reschedule_transport_order",
+					"Sales Order-custom_address_zone",
+					"Sales Order-custom_completed_without_otp"
 				),
 			]
 		],

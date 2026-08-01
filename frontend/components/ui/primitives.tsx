@@ -95,18 +95,25 @@ export function Modal({
   title,
   onClose,
   children,
+  className,
 }: {
   open: boolean
   title: string
   onClose: () => void
   children: React.ReactNode
+  className?: string
 }) {
   if (!open) return null
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-[#0b2d4d]/30 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-lg rounded-3xl bg-card shadow-[0_24px_64px_rgba(11,45,77,0.18)]">
-        <div className="flex items-center justify-between px-6 py-5">
+      <div
+        className={cn(
+          'relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col rounded-3xl bg-card shadow-[0_24px_64px_rgba(11,45,77,0.18)]',
+          className
+        )}
+      >
+        <div className="flex shrink-0 items-center justify-between px-6 py-5">
           <h2 className="font-serif-display text-xl font-semibold text-foreground">{title}</h2>
           <button
             type="button"
@@ -116,7 +123,7 @@ export function Modal({
             ✕
           </button>
         </div>
-        <div className="px-6 pb-6">{children}</div>
+        <div className="overflow-y-auto px-6 pb-6">{children}</div>
       </div>
     </div>
   )

@@ -123,11 +123,24 @@ def get_sales_order_fields():
 			"allow_on_submit": 1,
 		},
 		{
+			"fieldname": "custom_reschedule_transport_order",
+			"fieldtype": "Check",
+			"label": "Reschedule Transport Order",
+			"insert_after": "custom_note",
+		},
+		{
+			"fieldname": "custom_reason_for_reschedule",
+			"fieldtype": "Small Text",
+			"label": "Reason for Reschedule",
+			"insert_after": "custom_reschedule_transport_order",
+			"depends_on": "eval:doc.custom_reschedule_transport_order",
+		},
+		{
 			"fieldname": "transport_charge_order_section",
 			"fieldtype": "Section Break",
 			"label": "Transport Charge Order",
 			"collapsible": 1,
-			"insert_after": "custom_note",
+			"insert_after": "custom_reason_for_reschedule",
 		},
 		{
 			"fieldname": "custom_is_transport_order",
@@ -143,6 +156,21 @@ def get_sales_order_fields():
 			"options": "Delivery Note",
 			"read_only": 1,
 			"insert_after": "custom_is_transport_order",
+		},
+		{
+			"fieldname": "custom_address_zone",
+			"fieldtype": "Link",
+			"label": "Address Zone",
+			"options": "Address Zone",
+			"insert_after": "custom_delivery_note_to_be_transported",
+		},
+		{
+			"fieldname": "custom_completed_without_otp",
+			"fieldtype": "Check",
+			"label": "Completed Without OTP",
+			"read_only": 1,
+			"allow_on_submit": 1,
+			"insert_after": "custom_address_zone",
 		},
 	]
 

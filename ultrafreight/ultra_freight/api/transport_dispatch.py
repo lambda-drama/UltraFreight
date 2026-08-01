@@ -1,6 +1,6 @@
 import frappe
 from frappe import _
-from frappe.utils import add_to_date, flt, format_datetime, now_datetime
+from frappe.utils import add_to_date, cint, flt, format_datetime, now_datetime
 
 from erpnext.controllers.accounts_controller import get_taxes_and_charges
 from erpnext.selling.doctype.sales_order.sales_order import make_sales_invoice
@@ -99,7 +99,15 @@ def create_transport_sales_order(delivery_note_name: str) -> str:
 	if not doc.customer:
 		frappe.throw(_("Delivery Note customer is required to create transport sales order"))
 
-	transport_charge = _resolve_transport_charge(original_goods_order, settings)
+	transport_customer = doc.get("transport_customer")
+	default_zone = get_default_zone_for_transport_customer(transport_customer)
+	address_zone = default_zone.get("zone") if default_zone else None
+	transport_charge = resolve_transport_charge(
+		settings=settings,
+		address_zone=address_zone,
+		transport_customer=transport_customer,
+		goods_sales_order_name=original_goods_order,
+	)
 	taxes_and_charges = settings.get("default_sales_taxes_template")
 
 	so = frappe.new_doc("Sales Order")
@@ -130,6 +138,8 @@ def create_transport_sales_order(delivery_note_name: str) -> str:
 		"custom_is_transport_order": 1,
 		"custom_delivery_note_to_be_transported": doc.name,
 	}
+	if address_zone and frappe.get_meta("Sales Order").has_field("custom_address_zone"):
+		so_values["custom_address_zone"] = address_zone
 	main_invoice = get_main_company_invoice_for_delivery_note(doc.name)
 	if main_invoice:
 		so_values["custom_main_company_invoice"] = main_invoice["name"]
@@ -176,6 +186,8 @@ def _is_valid_transport_sales_order(
 		as_dict=True,
 	)
 	if not values or not values.custom_is_transport_order:
+		return False
+	if values.docstatus == 2:
 		return False
 	if values.custom_delivery_note_to_be_transported != delivery_note_name:
 		return False
@@ -230,7 +242,7 @@ def _send_transport_company_pending_dispatch(delivery_note_name: str, transport_
 		)
 
 
-def initiate_transport_on_sales_order_submit(sales_order_name: str):
+def initiate_transport_on_sales_order_submit(sales_order_name: str, send_otp: int | None = None):
 	so = frappe.get_doc("Sales Order", sales_order_name)
 	if not so.get("custom_is_transport_order"):
 		return
@@ -243,16 +255,38 @@ def initiate_transport_on_sales_order_submit(sales_order_name: str):
 	if dn.docstatus != 1:
 		frappe.throw(_("Linked Delivery Note {0} must be submitted").format(dn_name))
 
-	otp = setup_delivery_note_otp(dn_name)
+	if send_otp is None:
+		send_otp = frappe.flags.get("ultrafreight_send_otp")
+	if send_otp is None:
+		send_otp = get_transport_customer_send_otp(dn.get("transport_customer"))
+	send_otp = 1 if cint(send_otp) else 0
 
-	try:
-		notify_transport_initiated(dn_name, sales_order_name, otp)
-		notify_on_the_way(dn_name)
-	except Exception:
-		frappe.log_error(
-			title=_("Ultra Dispatch Notification Failed"),
-			message=frappe.get_traceback(),
+	otp = None
+	if send_otp:
+		otp = setup_delivery_note_otp(dn_name)
+		try:
+			notify_transport_initiated(dn_name, sales_order_name, otp)
+			notify_on_the_way(dn_name)
+		except Exception:
+			frappe.log_error(
+				title=_("Ultra Dispatch Notification Failed"),
+				message=frappe.get_traceback(),
+			)
+	else:
+		# Clear any leftover OTP when intentionally skipping OTP dispatch
+		frappe.db.set_value(
+			"Delivery Note",
+			dn_name,
+			{"otp": None, "otp_generated_at": None, "otp_expires_at": None},
+			update_modified=False,
 		)
+		try:
+			notify_on_the_way(dn_name)
+		except Exception:
+			frappe.log_error(
+				title=_("Ultra Dispatch Notification Failed"),
+				message=frappe.get_traceback(),
+			)
 
 	create_confirmation_log(
 		delivery_note_name=dn_name,
@@ -269,6 +303,15 @@ def initiate_transport_on_sales_order_submit(sales_order_name: str):
 		{"delivery_status": "In Transit"},
 		update_modified=False,
 	)
+
+
+def get_transport_customer_send_otp(transport_customer: str | None) -> int:
+	if not transport_customer:
+		return 1
+	value = frappe.db.get_value("Transport Customer", transport_customer, "send_otp")
+	if value is None:
+		return 1
+	return 1 if cint(value) else 0
 
 
 def create_transport_sales_invoice_from_order(transport_sales_order_name: str) -> str:
@@ -630,6 +673,72 @@ def _validate_transport_order_items(doc, transport_item: str):
 
 
 validate_transport_order_items = _validate_transport_order_items
+
+
+def get_default_zone_for_transport_customer(transport_customer: str | None) -> dict | None:
+	"""Return the default zone row for a transport customer (falls back to sole zone)."""
+	if not transport_customer:
+		return None
+
+	rows = frappe.get_all(
+		"Address Zone Detail",
+		filters={"parent": transport_customer, "parenttype": "Transport Customer"},
+		fields=["name", "zone", "city", "transport_charges", "default", "idx"],
+		order_by="idx asc",
+	)
+	if not rows:
+		return None
+
+	for row in rows:
+		if row.get("default"):
+			return row
+	if len(rows) == 1:
+		return rows[0]
+	return None
+
+
+def get_zones_for_transport_customer(transport_customer: str | None) -> list[dict]:
+	if not transport_customer:
+		return []
+
+	rows = frappe.get_all(
+		"Address Zone Detail",
+		filters={"parent": transport_customer, "parenttype": "Transport Customer"},
+		fields=["name", "zone", "city", "transport_charges", "default", "idx"],
+		order_by="default desc, idx asc",
+	)
+	for row in rows:
+		if not row.get("city") and row.get("zone"):
+			row["city"] = frappe.db.get_value("Address Zone", row.zone, "zone_city")
+		if not flt(row.get("transport_charges")) and row.get("zone"):
+			row["transport_charges"] = flt(frappe.db.get_value("Address Zone", row.zone, "transport_charges"))
+	return rows
+
+
+def resolve_transport_charge(
+	settings: dict | None = None,
+	address_zone: str | None = None,
+	transport_customer: str | None = None,
+	goods_sales_order_name: str | None = None,
+) -> float:
+	"""Zone charge first, then Transport Settings (and legacy goods SO charge as last fallback)."""
+	settings = settings or get_transport_settings()
+
+	if address_zone and transport_customer:
+		row_charge = frappe.db.get_value(
+			"Address Zone Detail",
+			{"parent": transport_customer, "parenttype": "Transport Customer", "zone": address_zone},
+			"transport_charges",
+		)
+		if flt(row_charge):
+			return flt(row_charge)
+
+	if address_zone:
+		zone_charge = frappe.db.get_value("Address Zone", address_zone, "transport_charges")
+		if flt(zone_charge):
+			return flt(zone_charge)
+
+	return _resolve_transport_charge(goods_sales_order_name, settings)
 
 
 def _resolve_transport_charge(goods_sales_order_name: str | None, settings: dict) -> float:
