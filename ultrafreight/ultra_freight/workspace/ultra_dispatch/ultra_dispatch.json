@@ -1,7 +1,7 @@
 {
  "app": "ultrafreight",
  "charts": [],
- "content": "[{\"id\":\"ud-h1\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Ultra Dispatch</b></span>\",\"col\":12}},{\"id\":\"ud-h2\",\"type\":\"paragraph\",\"data\":{\"text\":\"<span class=\\\"text-muted\\\">Manage direct deliveries, drivers, transport customers, and delivery confirmations.</span>\",\"col\":12}},{\"id\":\"ud-sp1\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"ud-s1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Transport Settings\",\"col\":3}},{\"id\":\"ud-s2\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Delivery Note\",\"col\":3}},{\"id\":\"ud-s3\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Transport Portal\",\"col\":3}},{\"id\":\"ud-s4\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Driver Portal\",\"col\":3}},{\"id\":\"ud-sp2\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"ud-c1\",\"type\":\"card\",\"data\":{\"card_name\":\"Configuration\",\"col\":4}},{\"id\":\"ud-c2\",\"type\":\"card\",\"data\":{\"card_name\":\"Masters\",\"col\":4}},{\"id\":\"ud-c3\",\"type\":\"card\",\"data\":{\"card_name\":\"Dispatch\",\"col\":4}},{\"id\":\"ud-c4\",\"type\":\"card\",\"data\":{\"card_name\":\"Portals\",\"col\":4}}]",
+ "content": "[{\"id\":\"ud-h1\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Ultra Dispatch</b></span>\",\"col\":12}},{\"id\":\"ud-h2\",\"type\":\"paragraph\",\"data\":{\"text\":\"<span class=\\\"text-muted\\\">Manage direct deliveries, drivers, transport customers, and delivery confirmations.</span>\",\"col\":12}},{\"id\":\"ud-sp1\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"ud-s1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Transport Settings\",\"col\":3}},{\"id\":\"ud-s2\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Delivery Note\",\"col\":3}},{\"id\":\"ud-s3\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Driver Portal\",\"col\":3}},{\"id\":\"ud-s4\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Transport Customer\",\"col\":3}},{\"id\":\"ud-sp2\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"ud-c1\",\"type\":\"card\",\"data\":{\"card_name\":\"Configuration\",\"col\":4}},{\"id\":\"ud-c2\",\"type\":\"card\",\"data\":{\"card_name\":\"Masters\",\"col\":4}},{\"id\":\"ud-c3\",\"type\":\"card\",\"data\":{\"card_name\":\"Dispatch\",\"col\":4}},{\"id\":\"ud-c4\",\"type\":\"card\",\"data\":{\"card_name\":\"Driver Portal\",\"col\":4}}]",
  "creation": "2026-06-17 21:00:00.000000",
  "custom_blocks": [],
  "docstatus": 0,
@@ -101,33 +101,23 @@
   {
    "hidden": 0,
    "is_query_report": 0,
-   "label": "Portals",
-   "link_count": 2,
+   "label": "Driver Portal",
+   "link_count": 1,
    "onboard": 0,
    "type": "Card Break"
   },
   {
    "hidden": 0,
    "is_query_report": 0,
-   "label": "Transport Portal",
+   "label": "Driver Confirmation",
    "link_count": 0,
-   "link_to": "/transport",
+   "link_to": "/driver-confirmation",
    "link_type": "URL",
-   "onboard": 1,
-   "type": "Link"
-  },
-  {
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Driver Portal",
-   "link_count": 0,
-   "link_to": "/driver",
-   "link_type": "URL",
-   "onboard": 1,
+   "onboard": 0,
    "type": "Link"
   }
  ],
- "modified": "2026-07-11 01:52:00.000000",
+ "modified": "2026-06-17 21:00:00.000000",
  "modified_by": "Administrator",
  "module": "Ultra Freight",
  "name": "Ultra Dispatch",
@@ -158,15 +148,17 @@
   },
   {
    "color": "Green",
-   "label": "Transport Portal",
-   "type": "URL",
-   "url": "/transport"
+   "doc_view": "List",
+   "label": "Transport Customer",
+   "link_to": "Transport Customer",
+   "stats_filter": "[]",
+   "type": "DocType"
   },
   {
    "color": "Grey",
    "label": "Driver Portal",
    "type": "URL",
-   "url": "/driver"
+   "url": "/driver-confirmation"
   }
  ],
  "title": "Ultra Dispatch",
