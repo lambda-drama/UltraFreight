@@ -8,15 +8,23 @@
   "otp_section",
   "otp_expiry_minutes",
   "column_break_otp",
-  "driver_portal_url",
   "company_section",
   "ultra_transport_company",
   "ultra_transport_email",
   "default_transport_item",
+  "column_break_company",
   "default_sales_taxes_template",
   "default_transport_charges",
-  "column_break_company",
   "default_country_code",
+  "accounting_dimension_section",
+  "branch",
+  "column_break_vhhl",
+  "cost_center",
+  "print_settings_section",
+  "default_print_format",
+  "enable_email",
+  "column_break_xqlx",
+  "default_letter_head",
   "sms_section",
   "enable_sms",
   "sms_provider",
@@ -41,13 +49,6 @@
   {
    "fieldname": "column_break_otp",
    "fieldtype": "Column Break"
-  },
-  {
-   "default": "/driver-confirmation",
-   "description": "Public URL path for driver delivery confirmation",
-   "fieldname": "driver_portal_url",
-   "fieldtype": "Data",
-   "label": "Driver Portal URL"
   },
   {
    "fieldname": "company_section",
@@ -81,8 +82,7 @@
   {
    "fieldname": "default_transport_charges",
    "fieldtype": "Currency",
-   "label": "Default Transport Charges",
-   "insert_after": "default_sales_taxes_template"
+   "label": "Default Transport Charges"
   },
   {
    "fieldname": "column_break_company",
@@ -129,13 +129,61 @@
    "fieldname": "sms_api_url",
    "fieldtype": "Data",
    "label": "SMS API URL"
+  },
+  {
+   "fieldname": "accounting_dimension_section",
+   "fieldtype": "Section Break",
+   "label": "Accounting Dimension"
+  },
+  {
+   "fieldname": "branch",
+   "fieldtype": "Link",
+   "label": "Branch",
+   "options": "Branch"
+  },
+  {
+   "fieldname": "cost_center",
+   "fieldtype": "Link",
+   "label": "Cost Center",
+   "options": "Cost Center"
+  },
+  {
+   "fieldname": "column_break_vhhl",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "print_settings_section",
+   "fieldtype": "Section Break",
+   "label": "Print Settings"
+  },
+  {
+   "fieldname": "default_print_format",
+   "fieldtype": "Link",
+   "label": "Default Print Format",
+   "options": "Print Format"
+  },
+  {
+   "fieldname": "column_break_xqlx",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "default_letter_head",
+   "fieldtype": "Link",
+   "label": "Default Letter Head",
+   "options": "Letter Head"
+  },
+  {
+   "default": "0",
+   "fieldname": "enable_email",
+   "fieldtype": "Check",
+   "label": "Enable Email"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-06-18 01:31:41.689762",
+ "modified": "2026-08-10 02:22:35.019381",
  "modified_by": "Administrator",
  "module": "Ultra Freight",
  "name": "Transport Settings",

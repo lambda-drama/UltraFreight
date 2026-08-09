@@ -28,7 +28,10 @@ fixtures = [
 					"Sales Order-transport_column_break",
 					"Sales Order-driver",
 					"Sales Order-expected_delivery_date",
-					"Sales Order-transport_charge",
+					# "Sales Order-transport_charge",
+					# "Sales Order-transport_charge_order_section",
+					"Sales Order-custom_is_transport_order",
+					"Sales Order-custom_delivery_note_to_be_transported",
 					"Delivery Note-transport_dispatch_section",
 					"Delivery Note-require_direct_delivery",
 					"Delivery Note-transport_customer",
@@ -42,11 +45,33 @@ fixtures = [
 					"Delivery Note-otp_generated_at",
 					"Delivery Note-otp_expires_at",
 					"Delivery Note-confirmation_log",
+					"Delivery Note-sms_status",
+					"Delivery Note-email_status",
+					"Delivery Note-transport_sales_order",
 					"Delivery Note-transport_sales_invoice",
 					"Driver-transport_dispatch_section",
 					"Driver-unique_key",
 					"Driver-vehicle_number",
 					"Driver-transport_company",
+     
+     		# Sales Order Custom Fields
+					"Sales Order-custom_last_customer_delivery_note_date",
+					"Sales Order-custom_last_customer_delivery_note",
+					"Sales Order-custom_last_customer_invoice_date",
+					"Sales Order-custom_last_customer_invoice",
+					"Sales Order-custom_main_company_invoice_date",
+					"Sales Order-custom_main_company_invoice",
+					"Sales Order-custom_main_company_invoice_date",
+					"Sales Order-custom_note",
+					"Sales Order-custom_final_customer_feedback_document",
+					"Sales Order-is_transport_charge_order",
+					"Sales Order-custom_last_customer_invoice",
+
+					#address
+					"Sales Order-custom_reason_for_reschedule",
+					"Sales Order-custom_reschedule_transport_order",
+					"Sales Order-custom_address_zone",
+					"Sales Order-custom_completed_without_otp"
 				),
 			]
 		],
@@ -57,10 +82,20 @@ fixtures = [
 add_to_apps_screen = [
 	{
 		"name": "ultrafreight",
+		"logo": "/assets/ultrafreight/image/logo.png",
 		"title": "Ultra Freight",
-		"route": "/desk/ultra-dispatch",
+		"route": "/transport",
 		"has_permission": "ultrafreight.ultra_freight.api.permission.has_app_permission",
 	}
+]
+
+website_route_rules = [
+	{"from_route": "/transport", "to_route": "transport_frontend"},
+	{"from_route": "/transport/<path:app_path>", "to_route": "transport_frontend"},
+	{"from_route": "/driver", "to_route": "driver"},
+	{"from_route": "/driver/<path:app_path>", "to_route": "driver"},
+	# Legacy SMS/email links → Driver Portal
+	{"from_route": "/driver-confirmation", "to_route": "driver-confirmation"},
 ]
 
 # Includes in <head>
@@ -179,6 +214,9 @@ doc_events = {
 		"before_insert": "ultrafreight.ultra_freight.custom.driver_hooks.ensure_driver_unique_key",
 		"before_save": "ultrafreight.ultra_freight.custom.driver_hooks.ensure_driver_unique_key",
 		"validate": "ultrafreight.ultra_freight.custom.driver_hooks.validate_driver",
+	},
+	"Sales Invoice": {
+		"on_submit": "ultrafreight.ultra_freight.custom.sales_invoice_hooks.sync_main_company_invoice_on_submit",
 	},
 }
 

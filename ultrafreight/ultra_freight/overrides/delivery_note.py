@@ -1,18 +1,23 @@
 import frappe
 from frappe import _
-from frappe.utils import add_to_date, format_datetime, now_datetime
+from frappe.utils import get_url
 
 from erpnext.stock.doctype.delivery_note.delivery_note import DeliveryNote
 
-from ultrafreight.ultra_freight.api.notifications import create_transport_sales_invoice
-from ultrafreight.ultra_freight.utils.otp_generator import generate_otp, get_otp_expiry_minutes
+from ultrafreight.ultra_freight.api.transport_dispatch import (
+	create_transport_sales_order,
+	notify_transport_company_pending_dispatch,
+)
+from ultrafreight.ultra_freight.utils.delivery_status import normalize_delivery_status
 
 
 class UltraFreightDeliveryNote(DeliveryNote):
 	def validate(self):
 		super().validate()
-		if self.get("require_direct_delivery") and not self.get("driver"):
-			frappe.throw(_("Assign a Driver before submitting a direct delivery"))
+		# if self.get("require_direct_delivery") and not self.get("driver"):
+		# 	frappe.throw(_("Assign a Driver before submitting a direct delivery"))
+		if self.get("require_direct_delivery"):
+			self.delivery_status = normalize_delivery_status(self.delivery_status)
 
 	def on_submit(self):
 		super().on_submit()
@@ -20,45 +25,31 @@ class UltraFreightDeliveryNote(DeliveryNote):
 			self.setup_dispatch()
 
 	def setup_dispatch(self):
-		otp = generate_otp()
-		generated_at = now_datetime()
-		expiry_minutes = get_otp_expiry_minutes()
-		expires_at = add_to_date(generated_at, minutes=expiry_minutes)
-		sales_order = self.get_linked_sales_order()
+		original_goods_order = self.get_linked_sales_order()
+		transport_sales_order = create_transport_sales_order(self.name)
+		frappe.db.commit()
 
-		invoice_name = create_transport_sales_invoice(self.name, sales_order)
+		notify_transport_company_pending_dispatch(self.name, transport_sales_order)
 
-		frappe.db.set_value(
-			"Delivery Note",
-			self.name,
-			{
-				"otp": otp,
-				"otp_generated_at": generated_at,
-				"otp_expires_at": expires_at,
-				"delivery_status": "Pending",
-				"transport_sales_invoice": invoice_name,
-			},
-			update_modified=False,
-		)
-		self.otp = otp
-		self.otp_generated_at = generated_at
-		self.otp_expires_at = expires_at
-		self.delivery_status = "Pending"
-		self.transport_sales_invoice = invoice_name
+		self.transport_sales_order = transport_sales_order
+		self.delivery_status = "Open"
 
-		portal_url = frappe.utils.get_url(
-			frappe.db.get_single_value("Transport Settings", "driver_portal_url") or "/driver-confirmation"
-		)
+		transport_company = frappe.db.get_single_value("Transport Settings", "ultra_transport_company")
+		so_link = get_url(f"/app/sales-order/{transport_sales_order}")
 		frappe.msgprint(
 			_(
-				"<b>OTP:</b> {0}<br>"
-				"<b>Expires:</b> {1}<br>"
-				"<b>Transport Invoice:</b> {2}<br><br>"
-				"Share the OTP with the driver. They confirm delivery at "
-				"<a href='{3}' target='_blank'>{3}</a>"
-			).format(otp, format_datetime(expires_at), invoice_name, portal_url),
-			title=_("Ultra Dispatch — Delivery Started"),
-			indicator="green",
+				"<b>New Transport Sales Order (Draft):</b> <a href='{0}' target='_blank'>{1}</a><br>"
+				"<b>Transport Company:</b> {2}<br>"
+				"<b>Goods Sales Order:</b> {3}<br>"
+				"<b>Status:</b> Open"
+			).format(
+				so_link,
+				transport_sales_order,
+				transport_company or "",
+				original_goods_order or _("N/A"),
+			),
+			title=_("Ultra Dispatch — Draft Transport Order Created"),
+			indicator="blue",
 		)
 
 	def get_linked_sales_order(self):
