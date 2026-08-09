@@ -15,6 +15,7 @@ import OtpsPage from '@/components/pages/otps-page'
 import InvoicesPage from '@/components/pages/invoices-page'
 import ConfirmationLogsPage from '@/components/pages/confirmation-logs-page'
 import SmsPage from '@/components/pages/sms-page'
+import EmailPage from '@/components/pages/email-page'
 import DriverPortalPage from '@/components/pages/driver-portal-page'
 
 function LoadingScreen() {
@@ -54,6 +55,8 @@ function AppContent() {
         return <ConfirmationLogsPage />
       case 'sms-logs':
         return <SmsPage />
+      case 'email-logs':
+        return <EmailPage />
       default:
         return <DashboardPage />
     }

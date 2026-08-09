@@ -27,6 +27,7 @@ def get_transport_settings() -> dict:
 			"sms_api_url",
 			"default_country_code",
 			"enable_sms",
+			"enable_email",
 			"ultra_transport_company",
 			"default_transport_item",
 			"default_sales_taxes_template",

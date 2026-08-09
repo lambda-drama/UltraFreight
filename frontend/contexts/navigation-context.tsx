@@ -13,6 +13,7 @@ const ALL_VIEWS = [
   'invoices',
   'confirmation-logs',
   'sms-logs',
+  'email-logs',
   'driver',
 ]
 

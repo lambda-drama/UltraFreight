@@ -283,12 +283,22 @@ def get_delivery_note_fields():
 			"insert_after": "confirmation_log",
 		},
 		{
+			"fieldname": "email_status",
+			"fieldtype": "Select",
+			"label": "Email Status",
+			"options": "\nNot Sent\nPartially Sent\nSent\nFailed",
+			"default": "Not Sent",
+			"read_only": 1,
+			"in_list_view": 1,
+			"insert_after": "sms_status",
+		},
+		{
 			"fieldname": "transport_sales_order",
 			"fieldtype": "Link",
 			"label": "Transport Sales Order",
 			"options": "Sales Order",
 			"read_only": 1,
-			"insert_after": "confirmation_log",
+			"insert_after": "email_status",
 		},
 		{
 			"fieldname": "transport_sales_invoice",

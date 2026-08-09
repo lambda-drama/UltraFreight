@@ -129,6 +129,45 @@ export function Modal({
   )
 }
 
+export function SideDrawer({
+  open,
+  title,
+  onClose,
+  children,
+  className,
+}: {
+  open: boolean
+  title: string
+  onClose: () => void
+  children: React.ReactNode
+  className?: string
+}) {
+  if (!open) return null
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <div className="absolute inset-0 bg-[#0b2d4d]/30 backdrop-blur-sm" onClick={onClose} />
+      <div
+        className={cn(
+          'relative z-10 flex h-full w-full max-w-xl flex-col bg-card shadow-[-12px_0_48px_rgba(11,45,77,0.18)]',
+          className
+        )}
+      >
+        <div className="flex shrink-0 items-center justify-between border-b border-border px-6 py-5">
+          <h2 className="font-serif-display text-xl font-semibold text-foreground">{title}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-6 py-5">{children}</div>
+      </div>
+    </div>
+  )
+}
+
 export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLabelElement>) {
   return <label className={cn('mb-1.5 block text-sm font-medium text-foreground/80', className)} {...props} />
 }
@@ -209,10 +248,12 @@ export function DataTable({
   columns,
   rows,
   emptyText = 'No records found.',
+  onRowClick,
 }: {
   columns: { key: string; label: string; render?: (row: Record<string, unknown>) => React.ReactNode }[]
   rows: Record<string, unknown>[]
   emptyText?: string
+  onRowClick?: (row: Record<string, unknown>) => void
 }) {
   if (!rows.length) {
     return (
@@ -237,7 +278,11 @@ export function DataTable({
           {rows.map((row, idx) => (
             <tr
               key={String(row.name || idx)}
-              className="border-b border-border transition-colors last:border-0 hover:bg-muted/30"
+              onClick={onRowClick ? () => onRowClick(row) : undefined}
+              className={cn(
+                'border-b border-border transition-colors last:border-0 hover:bg-muted/30',
+                onRowClick && 'cursor-pointer'
+              )}
             >
               {columns.map((col) => (
                 <td key={col.key} className="px-5 py-4 align-top text-foreground/90">

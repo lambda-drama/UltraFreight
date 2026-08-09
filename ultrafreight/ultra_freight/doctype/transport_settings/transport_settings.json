@@ -22,6 +22,7 @@
   "cost_center",
   "print_settings_section",
   "default_print_format",
+  "enable_email",
   "column_break_xqlx",
   "default_letter_head",
   "sms_section",
@@ -170,13 +171,19 @@
    "fieldtype": "Link",
    "label": "Default Letter Head",
    "options": "Letter Head"
+  },
+  {
+   "default": "0",
+   "fieldname": "enable_email",
+   "fieldtype": "Check",
+   "label": "Enable Email"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-07-12 22:18:03.769656",
+ "modified": "2026-08-10 02:22:35.019381",
  "modified_by": "Administrator",
  "module": "Ultra Freight",
  "name": "Transport Settings",

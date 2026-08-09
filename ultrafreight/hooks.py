@@ -46,6 +46,7 @@ fixtures = [
 					"Delivery Note-otp_expires_at",
 					"Delivery Note-confirmation_log",
 					"Delivery Note-sms_status",
+					"Delivery Note-email_status",
 					"Delivery Note-transport_sales_order",
 					"Delivery Note-transport_sales_invoice",
 					"Driver-transport_dispatch_section",

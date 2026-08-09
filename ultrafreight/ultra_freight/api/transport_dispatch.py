@@ -5,7 +5,15 @@ from frappe.utils import add_to_date, cint, flt, format_datetime, now_datetime
 from erpnext.controllers.accounts_controller import get_taxes_and_charges
 from erpnext.selling.doctype.sales_order.sales_order import make_sales_invoice
 
-from ultrafreight.ultra_freight.api.notifications import create_confirmation_log, notify_on_the_way
+from ultrafreight.ultra_freight.api.notifications import (
+	create_confirmation_log,
+	get_company_email,
+	get_customer_email,
+	get_driver_display,
+	notify_on_the_way,
+	notify_transport_company_pending_dispatch_inline,
+)
+from ultrafreight.ultra_freight.utils.email_handler import build_hardcoded_email, send_transport_email
 from ultrafreight.ultra_freight.utils.otp_generator import generate_otp, get_otp_expiry_minutes
 from ultrafreight.ultra_freight.utils.sms_handler import send_transport_sms
 from ultrafreight.ultra_freight.utils.transport_settings import get_driver_portal_url, get_transport_settings
@@ -195,46 +203,13 @@ def _is_valid_transport_sales_order(
 
 
 def notify_transport_company_pending_dispatch(delivery_note_name: str, transport_sales_order: str):
-	frappe.enqueue(
-		"ultrafreight.ultra_freight.api.transport_dispatch._send_transport_company_pending_dispatch",
-		queue="short",
-		delivery_note_name=delivery_note_name,
-		transport_sales_order=transport_sales_order,
-		now=frappe.in_test,
-	)
+	# Run inline so Email Queue rows are created in the same request (no worker required).
+	_send_transport_company_pending_dispatch(delivery_note_name, transport_sales_order)
 
 
 def _send_transport_company_pending_dispatch(delivery_note_name: str, transport_sales_order: str):
 	try:
-		doc = frappe.get_doc("Delivery Note", delivery_note_name)
-		settings = get_transport_settings()
-		email = settings.get("ultra_transport_email")
-		subject = _("Transport request - Delivery Note {0}").format(doc.name)
-		message = format_delivery_note_email(
-			doc,
-			_(
-				"A delivery note requires transport. A <strong>draft</strong> Sales Order "
-				"<strong>{0}</strong> has been created. Please review and update the "
-				"quantity or amount if needed, then submit it to initiate dispatch."
-			).format(transport_sales_order),
-		)
-
-		if email:
-			send_transport_email([email], subject, message, "Delivery Note", doc.name)
-
-		sms_message = _(
-			"Draft transport SO {0} created for DN {1}. Review amount/qty, then submit to initiate dispatch."
-		).format(transport_sales_order, doc.name)
-		phone = _get_company_phone(settings.get("ultra_transport_company"))
-		if phone:
-			send_transport_sms(
-				[phone],
-				sms_message,
-				delivery_note=doc.name,
-				party="Transport Company",
-				event="Draft Transport Order",
-				recipient_label=settings.get("ultra_transport_company"),
-			)
+		notify_transport_company_pending_dispatch_inline(delivery_note_name, transport_sales_order)
 	except Exception:
 		frappe.log_error(
 			title=_("Ultra Dispatch Notification Failed"),
@@ -281,6 +256,7 @@ def initiate_transport_on_sales_order_submit(sales_order_name: str, send_otp: in
 			update_modified=False,
 		)
 		try:
+			notify_transport_initiated(dn_name, sales_order_name, otp="")
 			notify_on_the_way(dn_name)
 		except Exception:
 			frappe.log_error(
@@ -516,12 +492,31 @@ def regenerate_otp_for_transport_order(sales_order_name: str, notify: bool = Tru
 
 
 def notify_transport_initiated(delivery_note_name: str, transport_sales_order_name: str, otp: str):
+	"""SMS parties + send the 4 hardcoded initiate emails (logged)."""
 	doc = frappe.get_doc("Delivery Note", delivery_note_name)
 	settings = get_transport_settings()
 	portal_link = get_driver_portal_url()
+	driver_name, vehicle_no = get_driver_display(doc)
+	otp_display = otp or doc.get("otp") or "—"
+
+	# Emails first — must not be blocked by SMS failures / missing phones
+	try:
+		_send_transport_initiated_emails(
+			doc,
+			transport_sales_order_name=transport_sales_order_name,
+			otp=otp_display,
+			driver_name=driver_name,
+			vehicle_no=vehicle_no,
+			portal_link=portal_link,
+		)
+	except Exception:
+		frappe.log_error(
+			title=_("Ultra Dispatch Initiate Emails Failed"),
+			message=frappe.get_traceback(),
+		)
 
 	sms_message = _("Transport initiated for DN {0}. OTP: {1}. Driver portal: {2}").format(
-		doc.name, otp, portal_link
+		doc.name, otp_display, portal_link
 	)
 
 	recipients = []
@@ -537,46 +532,183 @@ def notify_transport_initiated(delivery_note_name: str, transport_sales_order_na
 		recipients.append((customer_phone, "Goods Customer", doc.customer))
 	if doc.driver:
 		if driver_phone := frappe.db.get_value("Driver", doc.driver, "cell_number"):
-			driver_name = frappe.db.get_value("Driver", doc.driver, "full_name")
-			recipients.append((driver_phone, "Driver", driver_name))
+			recipients.append((driver_phone, "Driver", driver_name or doc.driver))
 		if driver_company := frappe.db.get_value("Driver", doc.driver, "transport_company"):
 			if company_phone := _get_company_phone(driver_company):
 				recipients.append((company_phone, "Transport Company", driver_company))
 
 	for phone, party, label in recipients:
-		send_transport_sms(
-			[phone],
-			sms_message,
-			delivery_note=doc.name,
-			party=party,
-			event="Transport Initiated",
-			recipient_label=label,
-		)
+		try:
+			send_transport_sms(
+				[phone],
+				sms_message,
+				delivery_note=doc.name,
+				party=party,
+				event="Transport Initiated",
+				recipient_label=label,
+			)
+		except Exception:
+			frappe.log_error(
+				title=_("Ultra Dispatch Initiate SMS Failed"),
+				message=frappe.get_traceback(),
+			)
 
-	email_recipients = set()
-	if settings.get("ultra_transport_email"):
-		email_recipients.add(settings.ultra_transport_email)
-	if doc.get("transport_email"):
-		email_recipients.add(doc.transport_email)
-	if customer_email := frappe.db.get_value("Customer", doc.customer, "email_id"):
-		email_recipients.add(customer_email)
 
-	email_body = format_delivery_note_email(
-		doc,
-		_(
-			"Transport charge Sales Order <strong>{0}</strong> has been submitted. "
-			"Dispatch is now active.<br>OTP: <strong>{1}</strong><br>"
-			"Driver portal: <a href='{2}'>{2}</a>"
-		).format(transport_sales_order_name, otp, portal_link),
+def _send_transport_initiated_emails(
+	doc,
+	*,
+	transport_sales_order_name: str,
+	otp: str,
+	driver_name: str,
+	vehicle_no: str,
+	portal_link: str,
+):
+	"""
+	Hardcoded initiate emails (templates later):
+	1. Goods Customer (transport SO / initial SO customer) — thank you for initiating
+	2. Transport Customer (final customer) — luggage on the road with track # + driver
+	3. Ultra Transport Contact Email — initiated confirmation
+	4. Original Company that created the goods DN/SO — materials are in transit
+	"""
+	settings = get_transport_settings()
+	track_no = doc.name
+	final_customer = doc.get("transport_customer_name") or "—"
+	goods_customer_name = doc.get("customer_name") or doc.get("customer") or "—"
+
+	def _safe_send(**kwargs):
+		try:
+			send_transport_email(**kwargs)
+		except Exception:
+			frappe.log_error(
+				title=_("Ultra Dispatch Initiate Email Failed"),
+				message=frappe.get_traceback(),
+			)
+
+	# 1) Goods customer (e.g. Crown) — their end customer is receiving the goods
+	goods_email = get_customer_email(doc.get("customer"))
+	destination = (doc.get("transport_address") or "").strip() or "—"
+	_safe_send(
+		recipients=[goods_email] if goods_email else [],
+		subject=_("Your goods are on the way to {0} — {1}").format(final_customer, track_no),
+		message=build_hardcoded_email(
+			_("Your Goods Are On The Way"),
+			[
+				_("Dear {0},").format(goods_customer_name),
+				_(
+					"Your goods are on the way to your customer <strong>{0}</strong>."
+				).format(final_customer),
+				_("Tracking number: <strong>{0}</strong>").format(track_no),
+				_("Delivery Note: <strong>{0}</strong>").format(track_no),
+				_("Your customer: <strong>{0}</strong>").format(final_customer),
+				_("Delivery address: {0}").format(destination),
+				_("Driver: <strong>{0}</strong>").format(driver_name or "—"),
+				_("Vehicle: {0}").format(vehicle_no or "—"),
+				_("OTP: <strong>{0}</strong>").format(otp),
+			],
+			delivery_note=None,
+		),
+		reference_doctype="Delivery Note",
+		reference_name=doc.name,
+		delivery_note=doc.name,
+		party="Goods Customer",
+		event="Transport Initiated",
+		recipient_label=goods_customer_name,
 	)
-	for email in email_recipients:
-		send_transport_email(
-			[email],
-			_("Transport Initiated - {0}").format(doc.name),
-			email_body,
-			"Delivery Note",
-			doc.name,
-		)
+
+	# 2) Final customer = Transport Customer — luggage / goods on the road
+	item_lines = "<br>".join(
+		f"• {frappe.utils.escape_html(row.item_name or row.item_code)} × {row.qty}"
+		for row in (doc.get("items") or [])
+		if row.get("item_code")
+	) or "—"
+	_safe_send(
+		recipients=[doc.get("transport_email")] if doc.get("transport_email") else [],
+		subject=_("Your delivery is on the way — {0}").format(track_no),
+		message=build_hardcoded_email(
+			_("Your Luggage / Goods Are On The Road"),
+			[
+				_("Dear {0},").format(final_customer),
+				_(
+					"Your delivery is on the way. Your goods are from <strong>{0}</strong>, your seller."
+				).format(goods_customer_name),
+				_("Tracking number: <strong>{0}</strong>").format(track_no),
+				_("Driver: <strong>{0}</strong>").format(driver_name or "—"),
+				_("Vehicle: {0}").format(vehicle_no or "—"),
+				_("OTP for confirmation: <strong>{0}</strong>").format(otp),
+				_("Delivery address: {0}").format(destination),
+				_("Items:<br>{0}").format(item_lines),
+			],
+			delivery_note=None,
+		),
+		reference_doctype="Delivery Note",
+		reference_name=doc.name,
+		delivery_note=doc.name,
+		party="Transport Customer",
+		event="Transport Initiated",
+		recipient_label=final_customer,
+	)
+
+	# 3) Ultra Transport Contact Email — company that handles the transport order
+	transport_email = settings.get("ultra_transport_email")
+	_safe_send(
+		recipients=[transport_email] if transport_email else [],
+		subject=_("Transport delivery initiated — {0}").format(track_no),
+		message=build_hardcoded_email(
+			_("Transport Delivery Initiated"),
+			[
+				_(
+					"Transport delivery for Delivery Note <strong>{0}</strong> has been initiated."
+				).format(track_no),
+				_("Transport Sales Order: <strong>{0}</strong>").format(transport_sales_order_name),
+				_("Goods customer: <strong>{0}</strong>").format(goods_customer_name),
+				_("Final customer: <strong>{0}</strong>").format(final_customer),
+				_("OTP: <strong>{0}</strong>").format(otp),
+				_("Driver: <strong>{0}</strong> · Vehicle: {1}").format(
+					driver_name or "—", vehicle_no or "—"
+				),
+			],
+			delivery_note=doc,
+		),
+		reference_doctype="Delivery Note",
+		reference_name=doc.name,
+		delivery_note=doc.name,
+		party="Transport Company",
+		event="Transport Initiated",
+		recipient_label=settings.get("ultra_transport_company") or "Ultra Transport",
+	)
+
+	# 4) Original company (e.g. Gajanan) — goods have left their premises to the final customer
+	original_company = doc.get("company")
+	company_email = get_company_email(original_company)
+	main_invoice = get_main_company_invoice_for_delivery_note(doc.name)
+	invoice_name = (main_invoice or {}).get("name") or "—"
+	_safe_send(
+		recipients=[company_email] if company_email else [],
+		subject=_("Goods have left the premises — {0}").format(track_no),
+		message=build_hardcoded_email(
+			_("Goods Have Left The Premises"),
+			[
+				_("Dear {0},").format(original_company or "Team"),
+				_(
+					"The goods have left the premises and are on the way to the final customer "
+					"<strong>{0}</strong>."
+				).format(final_customer),
+				_("Delivery Note: <strong>{0}</strong>").format(track_no),
+				_("Sales Invoice: <strong>{0}</strong>").format(invoice_name),
+				_("Final customer: <strong>{0}</strong>").format(final_customer),
+				_("Delivery address: {0}").format(destination),
+				_("Driver: <strong>{0}</strong>").format(driver_name or "—"),
+				_("Vehicle: {0}").format(vehicle_no or "—"),
+			],
+			delivery_note=None,
+		),
+		reference_doctype="Delivery Note",
+		reference_name=doc.name,
+		delivery_note=doc.name,
+		party="Original Company",
+		event="Transport Initiated",
+		recipient_label=original_company,
+	)
 
 
 def _get_linked_sales_order(doc) -> str | None:

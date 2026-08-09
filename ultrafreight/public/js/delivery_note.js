@@ -3,6 +3,7 @@ frappe.ui.form.on("Delivery Note", {
 		toggle_transport_fields(frm);
 		add_dispatch_buttons(frm);
 		render_sms_logs(frm);
+		render_email_logs(frm);
 	},
 	require_direct_delivery(frm) {
 		toggle_transport_fields(frm);
@@ -23,6 +24,7 @@ function toggle_transport_fields(frm) {
 		"otp_expires_at",
 		"confirmation_log",
 		"sms_status",
+		"email_status",
 		"transport_sales_order",
 		"transport_sales_invoice",
 	];
@@ -105,6 +107,60 @@ function render_sms_logs(frm) {
 				</div>`;
 
 			frm.dashboard.add_section(html, __("SMS Log"));
+		},
+	});
+}
+
+function render_email_logs(frm) {
+	if (!frm.doc.require_direct_delivery || !frm.doc.name || frm.doc.__islocal || frm.doc.docstatus !== 1) {
+		return;
+	}
+
+	frappe.call({
+		method: "ultrafreight.ultra_freight.api.transport_portal.get_email_logs",
+		args: { delivery_note: frm.doc.name },
+		callback(r) {
+			if (r.exc) {
+				return;
+			}
+			const logs = r.message || [];
+			if (!logs.length) {
+				return;
+			}
+
+			const rows = logs
+				.map(
+					(log) => `
+					<tr>
+						<td>${frappe.utils.escape_html(log.event || "")}</td>
+						<td>${frappe.utils.escape_html(log.party || "")}</td>
+						<td>${frappe.utils.escape_html(log.recipient_label || log.recipient || "")}</td>
+						<td>${frappe.utils.escape_html(log.recipient || "")}</td>
+						<td><span class="indicator ${sms_status_color(log.status)}">${frappe.utils.escape_html(log.status || "")}</span></td>
+						<td style="max-width:280px;white-space:normal;">${frappe.utils.escape_html(log.subject || "")}</td>
+					</tr>`
+				)
+				.join("");
+
+			const html = `
+				<div class="email-log-panel" style="margin-top:12px;">
+					<h6>${__("Email Notifications")}</h6>
+					<table class="table table-bordered table-sm">
+						<thead>
+							<tr>
+								<th>${__("Event")}</th>
+								<th>${__("Party")}</th>
+								<th>${__("Recipient")}</th>
+								<th>${__("Email")}</th>
+								<th>${__("Status")}</th>
+								<th>${__("Subject")}</th>
+							</tr>
+						</thead>
+						<tbody>${rows}</tbody>
+					</table>
+				</div>`;
+
+			frm.dashboard.add_section(html, __("Email Log"));
 		},
 	});
 }

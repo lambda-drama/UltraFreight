@@ -7,6 +7,7 @@ from ultrafreight.ultra_freight.utils.transport_settings import get_transport_se
 
 from ultrafreight.ultra_freight.utils.delivery_status import normalize_delivery_status as _normalize_delivery_status
 from ultrafreight.ultra_freight.utils.sms_log import get_delivery_sms_logs
+from ultrafreight.ultra_freight.utils.email_log import get_delivery_email_logs
 
 
 def _require_login():
@@ -272,6 +273,7 @@ def get_dispatches(status: str | None = None, filter: str | None = None, search:
 			"posting_date",
 			"delivery_status",
 			"sms_status",
+			"email_status",
 			"driver",
 			"vehicle_no",
 			"transport_customer_name",
@@ -417,6 +419,8 @@ def get_dispatch_detail(delivery_note: str):
 		"confirmation_logs": confirmation_logs,
 		"sms_logs": get_delivery_sms_logs(doc.name),
 		"sms_status": doc.get("sms_status") or "Not Sent",
+		"email_logs": get_delivery_email_logs(doc.name),
+		"email_status": doc.get("email_status") or "Not Sent",
 		"movements": _get_delivery_movements(delivery_note),
 	}
 
@@ -1492,6 +1496,47 @@ def get_sms_logs(delivery_note: str | None = None):
 			"event",
 			"recipient",
 			"recipient_label",
+			"message",
+			"status",
+			"sent_at",
+			"error",
+			"creation",
+		],
+		order_by="creation desc",
+		limit=200,
+	)
+
+
+@frappe.whitelist()
+def get_email_logs(delivery_note: str | None = None):
+	_require_login()
+	if delivery_note:
+		if not frappe.db.exists("Delivery Note", delivery_note):
+			return []
+		if delivery_note not in _get_linked_delivery_notes():
+			if not frappe.has_permission("Delivery Note", "read", delivery_note):
+				frappe.throw(_("This delivery note is not linked to your transport company"))
+			return get_delivery_email_logs(delivery_note)
+		return get_delivery_email_logs(delivery_note)
+
+	dn_names = _get_linked_delivery_notes()
+	if not dn_names:
+		return []
+
+	if not frappe.db.exists("DocType", "Delivery Email Log"):
+		return []
+
+	return frappe.get_all(
+		"Delivery Email Log",
+		filters={"delivery_note": ("in", dn_names)},
+		fields=[
+			"name",
+			"delivery_note",
+			"party",
+			"event",
+			"recipient",
+			"recipient_label",
+			"subject",
 			"message",
 			"status",
 			"sent_at",

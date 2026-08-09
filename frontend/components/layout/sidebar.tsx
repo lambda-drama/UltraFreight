@@ -12,6 +12,7 @@ import {
   KeyRound,
   Receipt,
   MessageSquare,
+  Mail,
 } from 'lucide-react'
 
 const navSections = [
@@ -35,6 +36,7 @@ const navSections = [
       { name: 'Invoices', view: 'invoices', icon: Receipt },
       { name: 'Confirmation Logs', view: 'confirmation-logs', icon: MessageSquare },
       { name: 'SMS Log', view: 'sms-logs', icon: MessageSquare },
+      { name: 'Email Log', view: 'email-logs', icon: Mail },
     ],
   },
 ]

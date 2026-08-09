@@ -58,6 +58,7 @@ export interface DispatchRow {
   transport_sales_invoice?: string
   confirmation_log?: string
   sms_status?: string
+  email_status?: string
   transport_order_submitted?: boolean
   needs_action?: boolean
   items?: DeliveryItem[]
@@ -452,6 +453,28 @@ export interface SmsLogRow {
 
 export function getSmsLogs(deliveryNote?: string) {
   return apiRequest<SmsLogRow[]>(`${API}.get_sms_logs`, {
+    method: 'POST',
+    body: JSON.stringify({ delivery_note: deliveryNote || '' }),
+  })
+}
+
+export interface EmailLogRow {
+  name: string
+  delivery_note: string
+  party: string
+  event: string
+  recipient: string
+  recipient_label?: string
+  subject?: string
+  message: string
+  status: string
+  sent_at?: string
+  error?: string
+  creation?: string
+}
+
+export function getEmailLogs(deliveryNote?: string) {
+  return apiRequest<EmailLogRow[]>(`${API}.get_email_logs`, {
     method: 'POST',
     body: JSON.stringify({ delivery_note: deliveryNote || '' }),
   })

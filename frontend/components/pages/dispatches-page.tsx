@@ -231,6 +231,7 @@ export default function DispatchesPage() {
                   value: (row) => formatDate(String(row.posting_date || '')),
                 },
                 { key: 'sms_status', label: 'SMS Status' },
+                { key: 'email_status', label: 'Email Status' },
               ] satisfies ListExportColumn[]
             }
             rows={filteredRows as unknown as Record<string, unknown>[]}
@@ -319,6 +320,11 @@ export default function DispatchesPage() {
                         SMS: {row.sms_status}
                       </Badge>
                     ) : null}
+                    {row.email_status ? (
+                      <Badge variant={row.email_status === 'Sent' ? 'success' : row.email_status === 'Failed' ? 'destructive' : 'muted'}>
+                        Email: {row.email_status}
+                      </Badge>
+                    ) : null}
                     <Button
                       variant="outline"
                       className="h-9 w-9 p-0"
@@ -394,7 +400,7 @@ export default function DispatchesPage() {
                       </div>
                     ) : null}
 
-                    {detail?.sms_logs?.length ? (
+                    {Array.isArray(detail?.sms_logs) && detail.sms_logs.length ? (
                       <div className="mt-4">
                         <div className="mb-2 text-sm font-medium">SMS Notifications</div>
                         <DataTable
@@ -427,6 +433,48 @@ export default function DispatchesPage() {
                             },
                           ]}
                           emptyText="No SMS logs yet."
+                        />
+                      </div>
+                    ) : null}
+
+                    {Array.isArray(detail?.email_logs) && detail.email_logs.length ? (
+                      <div className="mt-4">
+                        <div className="mb-2 text-sm font-medium">Email Notifications</div>
+                        <DataTable
+                          rows={(detail.email_logs as Record<string, unknown>[]) || []}
+                          columns={[
+                            { key: 'event', label: 'Event' },
+                            { key: 'party', label: 'Party' },
+                            {
+                              key: 'recipient_label',
+                              label: 'Recipient',
+                              render: (r) => String(r.recipient_label || r.recipient || '—'),
+                            },
+                            {
+                              key: 'recipient',
+                              label: 'Email',
+                              render: (r) => String(r.recipient || '—'),
+                            },
+                            {
+                              key: 'status',
+                              label: 'Status',
+                              render: (r) => (
+                                <Badge variant={String(r.status) === 'Sent' ? 'success' : String(r.status) === 'Failed' ? 'destructive' : 'muted'}>
+                                  {String(r.status)}
+                                </Badge>
+                              ),
+                            },
+                            {
+                              key: 'subject',
+                              label: 'Subject',
+                              render: (r) => (
+                                <span className="block max-w-xs truncate text-xs" title={String(r.subject || '')}>
+                                  {String(r.subject || '—')}
+                                </span>
+                              ),
+                            },
+                          ]}
+                          emptyText="No email logs yet."
                         />
                       </div>
                     ) : null}
