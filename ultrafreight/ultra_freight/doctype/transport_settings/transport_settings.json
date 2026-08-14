@@ -25,6 +25,9 @@
   "enable_email",
   "column_break_xqlx",
   "default_letter_head",
+  "actions_section",
+  "create_transport_order_on_dnote_submission",
+  "delivery_note_workflow_action_to_create_order",
   "sms_section",
   "enable_sms",
   "sms_provider",
@@ -177,13 +180,32 @@
    "fieldname": "enable_email",
    "fieldtype": "Check",
    "label": "Enable Email"
+  },
+  {
+   "depends_on": "eval:!doc.create_transport_order_on_dnote_submission",
+   "description": "When Create Transport Order on DNote Submission is off, create the transport Sales Order when this Delivery Note workflow action is applied.",
+   "fieldname": "delivery_note_workflow_action_to_create_order",
+   "fieldtype": "Link",
+   "label": "Delivery Note Workflow Action To Create Order",
+   "options": "Workflow Action Master"
+  },
+  {
+   "fieldname": "actions_section",
+   "fieldtype": "Section Break",
+   "label": "Actions"
+  },
+  {
+   "default": "0",
+   "fieldname": "create_transport_order_on_dnote_submission",
+   "fieldtype": "Check",
+   "label": "Create Transport Order on DNote Submission"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-08-10 02:22:35.019381",
+ "modified": "2026-08-14 03:24:17.280927",
  "modified_by": "Administrator",
  "module": "Ultra Freight",
  "name": "Transport Settings",

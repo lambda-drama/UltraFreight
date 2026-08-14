@@ -37,6 +37,8 @@ def get_transport_settings() -> dict:
 			"cost_center",
 			"default_print_format",
 			"default_letter_head",
+			"create_transport_order_on_dnote_submission",
+			"delivery_note_workflow_action_to_create_order",
 		],
 		as_dict=True,
 	) or {}
