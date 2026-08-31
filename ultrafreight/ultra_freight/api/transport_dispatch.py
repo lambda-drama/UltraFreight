@@ -837,8 +837,10 @@ def get_zones_for_transport_customer(transport_customer: str | None) -> list[dic
 		"Address Zone Detail",
 		filters={"parent": transport_customer, "parenttype": "Transport Customer"},
 		fields=["name", "zone", "city", "transport_charges", "default", "idx"],
-		order_by="default desc, idx asc",
+		order_by="idx asc",
 	)
+	# `default` is a reserved SQL keyword — sort in Python instead of ORDER BY.
+	rows.sort(key=lambda row: (not cint(row.get("default")), row.get("idx") or 0))
 	for row in rows:
 		if not row.get("city") and row.get("zone"):
 			row["city"] = frappe.db.get_value("Address Zone", row.zone, "zone_city")
