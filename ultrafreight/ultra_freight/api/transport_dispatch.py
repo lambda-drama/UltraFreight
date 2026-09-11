@@ -181,6 +181,226 @@ def create_transport_sales_order(delivery_note_name: str) -> str:
 	return so.name
 
 
+def _resolve_standalone_transport_customer(
+	transport_customer: str | None = None,
+	transport_customer_name: str | None = None,
+	transport_phone: str | None = None,
+	transport_email: str | None = None,
+	transport_address: str | None = None,
+) -> dict:
+	"""Resolve final transport customer for standalone create — pick existing or create."""
+	from ultrafreight.ultra_freight.utils.transport_customer import (
+		find_or_create_transport_customer,
+		sync_transport_customer_fields,
+	)
+
+	transport_customer = (transport_customer or "").strip() or None
+	transport_customer_name = (transport_customer_name or "").strip() or None
+	transport_phone = (transport_phone or "").strip() or None
+	transport_email = (transport_email or "").strip() or None
+	transport_address = (transport_address or "").strip() or None
+
+	if transport_customer and frappe.db.exists("Transport Customer", transport_customer):
+		tc = frappe.get_cached_doc("Transport Customer", transport_customer)
+		return {
+			"transport_customer": tc.name,
+			"transport_customer_name": transport_customer_name or tc.customer_name,
+			"transport_phone": transport_phone or tc.phone_number,
+			"transport_email": transport_email or tc.email,
+			"transport_address": transport_address or tc.delivery_address,
+		}
+
+	if transport_customer_name and transport_phone:
+		name = find_or_create_transport_customer(
+			customer_name=transport_customer_name,
+			phone_number=transport_phone,
+			email=transport_email,
+			delivery_address=transport_address,
+		)
+		# sync fills from master; overlay any explicit values below
+		holder = frappe._dict({"transport_customer": name})
+		sync_transport_customer_fields(holder)
+		return {
+			"transport_customer": name,
+			"transport_customer_name": transport_customer_name or holder.transport_customer_name,
+			"transport_phone": transport_phone or holder.transport_phone,
+			"transport_email": transport_email or holder.transport_email,
+			"transport_address": transport_address or holder.transport_address,
+		}
+
+	if transport_customer_name or transport_phone or transport_email or transport_address:
+		# Partial details without enough to create a Transport Customer record
+		return {
+			"transport_customer": None,
+			"transport_customer_name": transport_customer_name,
+			"transport_phone": transport_phone,
+			"transport_email": transport_email,
+			"transport_address": transport_address,
+		}
+
+	return {}
+
+
+def create_standalone_transport_sales_order(
+	customer: str,
+	rate: float | None = None,
+	qty: float = 1,
+	delivery_note: str | None = None,
+	custom_address_zone: str | None = None,
+	note: str | None = None,
+	external_delivery_note: str | None = None,
+	transport_customer: str | None = None,
+	transport_customer_name: str | None = None,
+	transport_phone: str | None = None,
+	transport_email: str | None = None,
+	transport_address: str | None = None,
+) -> str:
+	"""Create a draft transport Sales Order without requiring a Delivery Note."""
+	settings = get_transport_settings()
+	_ensure_transport_fields_installed()
+
+	company = settings.get("ultra_transport_company")
+	transport_item = settings.get("default_transport_item")
+	if not company:
+		frappe.throw(_("Set Ultra Transport Company in Transport Settings"))
+	if not transport_item:
+		frappe.throw(_("Set Default Transport Service Item in Transport Settings"))
+
+	customer = (customer or "").strip()
+	if not customer:
+		frappe.throw(_("Customer is required"))
+	if not frappe.db.exists("Customer", customer):
+		frappe.throw(_("Customer {0} was not found").format(customer))
+
+	delivery_note = resolve_delivery_note_reference(delivery_note)
+	goods_order = None
+	if delivery_note:
+		goods_order = frappe.db.get_value(
+			"Delivery Note Item",
+			{"parent": delivery_note, "against_sales_order": ("is", "set")},
+			"against_sales_order",
+		)
+		existing = frappe.db.get_value("Delivery Note", delivery_note, "transport_sales_order")
+		if existing and _is_valid_transport_sales_order(existing, goods_order, delivery_note):
+			frappe.throw(
+				_("Delivery Note {0} already has transport order {1}").format(delivery_note, existing)
+			)
+
+	final_customer = _resolve_standalone_transport_customer(
+		transport_customer=transport_customer,
+		transport_customer_name=transport_customer_name,
+		transport_phone=transport_phone,
+		transport_email=transport_email,
+		transport_address=transport_address,
+	)
+	# When linking an existing DN with no UI override, keep DN's current final customer
+	if delivery_note and not final_customer:
+		dn_tc = frappe.db.get_value(
+			"Delivery Note",
+			delivery_note,
+			[
+				"transport_customer",
+				"transport_customer_name",
+				"transport_phone",
+				"transport_email",
+				"transport_address",
+			],
+			as_dict=True,
+		)
+		if dn_tc and (dn_tc.transport_customer or dn_tc.transport_customer_name):
+			final_customer = {
+				"transport_customer": dn_tc.transport_customer,
+				"transport_customer_name": dn_tc.transport_customer_name,
+				"transport_phone": dn_tc.transport_phone,
+				"transport_email": dn_tc.transport_email,
+				"transport_address": dn_tc.transport_address,
+			}
+
+	transport_charge = flt(rate) if rate is not None else flt(settings.get("default_transport_charges"))
+	line_qty = flt(qty) or 1
+	taxes_and_charges = settings.get("default_sales_taxes_template")
+
+	so = frappe.new_doc("Sales Order")
+	so.company = company
+	so.customer = customer
+	so.transaction_date = frappe.utils.today()
+	so.delivery_date = frappe.utils.today()
+	so.currency = frappe.db.get_value("Company", company, "default_currency")
+	so.conversion_rate = 1
+
+	if delivery_note:
+		description = _("Transport charge for Delivery Note {0}").format(delivery_note)
+		if goods_order:
+			description = _("Transport charge for Delivery Note {0} (Goods Order: {1})").format(
+				delivery_note, goods_order
+			)
+	else:
+		description = (note or "").strip() or _("Standalone transport charge")
+
+	_append_transport_service_item(
+		so,
+		transport_item,
+		transport_charge,
+		delivery_note or _("Standalone"),
+		goods_order,
+		description=description,
+		qty=line_qty,
+	)
+	_apply_transport_taxes(so, taxes_and_charges, company)
+
+	so.flags.creating_transport_sales_order = True
+	so.flags.ignore_pricing_rule = True
+	so.run_method("calculate_taxes_and_totals")
+	so.insert(ignore_permissions=True)
+
+	so_meta = frappe.get_meta("Sales Order")
+	so_values = {"custom_is_transport_order": 1}
+	if delivery_note:
+		so_values["custom_delivery_note_to_be_transported"] = delivery_note
+		main_invoice = get_main_company_invoice_for_delivery_note(delivery_note)
+		if main_invoice:
+			so_values["custom_main_company_invoice"] = main_invoice["name"]
+			so_values["custom_main_company_invoice_date"] = main_invoice["posting_date"]
+	if custom_address_zone and so_meta.has_field("custom_address_zone"):
+		so_values["custom_address_zone"] = custom_address_zone
+	if note and so_meta.has_field("custom_note"):
+		so_values["custom_note"] = note.strip()
+	external_delivery_note = (external_delivery_note or "").strip()
+	if external_delivery_note and so_meta.has_field("custom_last_customer_delivery_note"):
+		so_values["custom_last_customer_delivery_note"] = external_delivery_note
+
+	for field, value in (final_customer or {}).items():
+		if value is not None and so_meta.has_field(field):
+			so_values[field] = value
+
+	frappe.db.set_value("Sales Order", so.name, so_values, update_modified=False)
+
+	if delivery_note:
+		dn_updates = {"transport_sales_order": so.name, "delivery_status": "Open"}
+		dn_meta = frappe.get_meta("Delivery Note")
+		for field, value in (final_customer or {}).items():
+			if value is not None and dn_meta.has_field(field):
+				dn_updates[field] = value
+		existing = frappe.db.get_value("Delivery Note", delivery_note, "transport_sales_order")
+		goods_order_name = goods_order
+		if not existing or not _is_valid_transport_sales_order(existing, goods_order_name, delivery_note):
+			frappe.db.set_value("Delivery Note", delivery_note, dn_updates, update_modified=False)
+		elif final_customer:
+			# DN already linked somehow — still refresh final customer fields
+			tc_only = {k: v for k, v in dn_updates.items() if k.startswith("transport_")}
+			if tc_only:
+				frappe.db.set_value("Delivery Note", delivery_note, tc_only, update_modified=False)
+		create_confirmation_log(
+			delivery_note_name=delivery_note,
+			sales_order_name=goods_order,
+			driver_name=frappe.db.get_value("Delivery Note", delivery_note, "driver"),
+			transport_customer=frappe.db.get_value("Delivery Note", delivery_note, "transport_customer"),
+			status="Open",
+		)
+
+	return so.name
+
+
 def _is_valid_transport_sales_order(
 	transport_order_name: str, goods_order_name: str | None, delivery_note_name: str
 ) -> bool:
@@ -222,7 +442,8 @@ def initiate_transport_on_sales_order_submit(sales_order_name: str, send_otp: in
 	if not so.get("custom_is_transport_order"):
 		return
 	if not so.get("custom_delivery_note_to_be_transported"):
-		frappe.throw(_("Delivery Note To Be Transported is required for transport orders"))
+		# Standalone transport order — submit for billing only, no dispatch flow.
+		return
 
 	dn_name = so.custom_delivery_note_to_be_transported
 	dn = frappe.get_doc("Delivery Note", dn_name)
@@ -763,6 +984,9 @@ def _append_transport_service_item(
 	transport_charge: float,
 	delivery_note_name: str,
 	goods_order_name: str | None = None,
+	*,
+	description: str | None = None,
+	qty: float = 1,
 ):
 	item_details = frappe.get_cached_value(
 		"Item",
@@ -773,11 +997,12 @@ def _append_transport_service_item(
 	if not item_details:
 		frappe.throw(_("Transport service item {0} was not found").format(transport_item))
 
-	description = _("Transport charge for Delivery Note {0}").format(delivery_note_name)
-	if goods_order_name:
-		description = _("Transport charge for Delivery Note {0} (Goods Order: {1})").format(
-			delivery_note_name, goods_order_name
-		)
+	if not description:
+		description = _("Transport charge for Delivery Note {0}").format(delivery_note_name)
+		if goods_order_name:
+			description = _("Transport charge for Delivery Note {0} (Goods Order: {1})").format(
+				delivery_note_name, goods_order_name
+			)
 
 	doc.append(
 		"items",
@@ -785,7 +1010,7 @@ def _append_transport_service_item(
 			"item_code": transport_item,
 			"item_name": item_details.item_name,
 			"description": description,
-			"qty": 1,
+			"qty": flt(qty) or 1,
 			"rate": transport_charge,
 			"uom": item_details.stock_uom,
 			"delivery_date": frappe.utils.today(),
@@ -805,6 +1030,49 @@ def _validate_transport_order_items(doc, transport_item: str):
 
 
 validate_transport_order_items = _validate_transport_order_items
+
+
+def resolve_delivery_note_reference(value: str | None) -> str | None:
+	"""Resolve a Delivery Note from its ID, name, customer text, or custom note number."""
+	value = (value or "").strip()
+	if not value:
+		return None
+
+	if frappe.db.exists("Delivery Note", value):
+		return value
+
+	dn_meta = frappe.get_meta("Delivery Note")
+	filters = {"require_direct_delivery": 1}
+	or_filters = [
+		["name", "like", f"%{value}%"],
+		["customer_name", "like", f"%{value}%"],
+		["transport_customer_name", "like", f"%{value}%"],
+	]
+	if dn_meta.has_field("custom_delivery_note_no"):
+		or_filters.append(["custom_delivery_note_no", "like", f"%{value}%"])
+
+	rows = frappe.get_all(
+		"Delivery Note",
+		filters=filters,
+		or_filters=or_filters,
+		fields=["name"],
+		order_by="modified desc",
+		limit=5,
+	)
+	if not rows:
+		frappe.throw(
+			_("Delivery Note {0} was not found. Search and choose a delivery note from the list.").format(
+				value
+			)
+		)
+	if len(rows) > 1:
+		matches = ", ".join(row.name for row in rows)
+		frappe.throw(
+			_("Multiple delivery notes match {0}: {1}. Please choose one from the list.").format(
+				value, matches
+			)
+		)
+	return rows[0].name
 
 
 def get_default_zone_for_transport_customer(transport_customer: str | None) -> dict | None:

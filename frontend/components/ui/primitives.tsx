@@ -1,6 +1,6 @@
 import { forwardRef } from 'react'
 import { cn } from '@/lib/utils'
-import { ArrowUpRight } from 'lucide-react'
+import { ArrowUpRight, Trash2 } from 'lucide-react'
 
 type ButtonVariant = 'default' | 'outline' | 'ghost' | 'silent' | 'soft' | 'destructive'
 
@@ -52,17 +52,20 @@ export function TextLink({
   )
 }
 
-export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <input
-      className={cn(
-        'flex h-10 w-full rounded-2xl border border-border bg-card px-4 py-2 text-sm outline-none transition-shadow placeholder:text-muted-foreground focus:border-secondary/50 focus:ring-2 focus:ring-ring/25',
-        className
-      )}
-      {...props}
-    />
-  )
-}
+export const Input = forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
+  function Input({ className, ...props }, ref) {
+    return (
+      <input
+        ref={ref}
+        className={cn(
+          'flex h-10 w-full rounded-2xl border border-border bg-card px-4 py-2 text-sm outline-none transition-shadow placeholder:text-muted-foreground focus:border-secondary/50 focus:ring-2 focus:ring-ring/25',
+          className
+        )}
+        {...props}
+      />
+    )
+  }
+)
 
 export function Textarea({ className, ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return (
@@ -124,6 +127,66 @@ export function Modal({
           </button>
         </div>
         <div className="overflow-y-auto px-6 pb-6">{children}</div>
+      </div>
+    </div>
+  )
+}
+
+export function ConfirmModal({
+  open,
+  title,
+  description,
+  confirmLabel = 'Delete',
+  cancelLabel = 'Cancel',
+  loading = false,
+  onConfirm,
+  onClose,
+}: {
+  open: boolean
+  title: string
+  description?: React.ReactNode
+  confirmLabel?: string
+  cancelLabel?: string
+  loading?: boolean
+  onConfirm: () => void
+  onClose: () => void
+}) {
+  if (!open) return null
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      <div
+        className="absolute inset-0 bg-[#0b2d4d]/35 backdrop-blur-sm"
+        onClick={() => {
+          if (!loading) onClose()
+        }}
+      />
+      <div className="relative z-10 w-full max-w-md rounded-3xl bg-card p-6 shadow-[0_24px_64px_rgba(11,45,77,0.2)]">
+        <div className="flex gap-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-destructive/10 text-destructive">
+            <Trash2 className="h-5 w-5" aria-hidden />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="font-serif-display text-xl font-semibold text-foreground">{title}</h2>
+            {description ? (
+              <div className="mt-2 text-sm leading-relaxed text-muted-foreground">{description}</div>
+            ) : null}
+          </div>
+        </div>
+        <div className="mt-6 flex justify-end gap-2">
+          <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
+            {cancelLabel}
+          </Button>
+          <Button type="button" variant="destructive" onClick={onConfirm} disabled={loading}>
+            {loading ? (
+              <span className="inline-flex items-center gap-2">
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent" />
+                Working…
+              </span>
+            ) : (
+              confirmLabel
+            )}
+          </Button>
+        </div>
       </div>
     </div>
   )

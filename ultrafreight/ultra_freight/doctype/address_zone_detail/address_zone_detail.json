@@ -24,6 +24,7 @@
   },
   {
    "fetch_from": "zone.zone_city",
+   "fetch_if_empty": 1,
    "fieldname": "city",
    "fieldtype": "Data",
    "in_list_view": 1,
@@ -39,6 +40,7 @@
   },
   {
    "fetch_from": "zone.transport_charges",
+   "fetch_if_empty": 1,
    "fieldname": "transport_charges",
    "fieldtype": "Currency",
    "in_list_view": 1,

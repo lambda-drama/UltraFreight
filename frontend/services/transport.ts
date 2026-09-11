@@ -100,6 +100,9 @@ export interface TransportOrderRow {
   custom_address_zone?: string
   transport_customer?: string
   transport_customer_name?: string
+  transport_phone?: string
+  transport_email?: string
+  transport_address?: string
   send_otp?: number
   zones?: {
     name?: string
@@ -192,11 +195,60 @@ export interface VehicleRow {
   make?: string
   model?: string
   company?: string
+  fuel_type?: string
+  uom?: string
+  last_odometer?: number
+  color?: string
+  location?: string
+  chassis_no?: string
+}
+
+export function createVehicle(payload: {
+  license_plate: string
+  make: string
+  model: string
+  fuel_type?: string
+  uom?: string
+  last_odometer?: number
+  color?: string
+  location?: string
+  chassis_no?: string
+}) {
+  return apiRequest<VehicleRow>(`${API}.create_vehicle`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateVehicle(
+  name: string,
+  payload: {
+    make?: string
+    model?: string
+    fuel_type?: string
+    uom?: string
+    color?: string
+    location?: string
+    chassis_no?: string
+  }
+) {
+  return apiRequest<VehicleRow>(`${API}.update_vehicle`, {
+    method: 'POST',
+    body: JSON.stringify({ name, ...payload }),
+  })
+}
+
+export function deleteVehicle(name: string) {
+  return apiRequest<{ ok: number; name: string }>(`${API}.delete_vehicle`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
 }
 
 export function updateDispatchTransportCustomer(
   deliveryNote: string,
   payload: {
+    transport_customer?: string
     transport_customer_name?: string
     transport_phone?: string
     transport_email?: string
@@ -213,6 +265,133 @@ export function getTransportOrders(docstatus?: string) {
   return apiRequest<TransportOrderRow[]>(`${API}.get_transport_orders`, {
     method: 'POST',
     body: JSON.stringify({ docstatus: docstatus || '' }),
+  })
+}
+
+export interface TransportOrderDefaults {
+  default_transport_charges?: number
+  default_transport_item?: string
+  transport_company?: string
+  currency?: string
+}
+
+export interface BillingCustomerOption {
+  name: string
+  customer_name?: string
+}
+
+export interface LinkableDeliveryNoteOption {
+  name: string
+  customer_name?: string
+  transport_customer?: string
+  transport_customer_name?: string
+  transport_phone?: string
+  transport_email?: string
+  transport_address?: string
+  delivery_status?: string
+  docstatus?: number
+  transport_sales_order?: string
+  posting_date?: string
+  custom_delivery_note_no?: string
+  already_linked?: boolean
+  label?: string
+}
+
+export interface TransportCustomerOption {
+  name: string
+  customer_name?: string
+  phone_number?: string
+  email?: string
+  delivery_address?: string
+}
+
+export function getTransportOrderDefaults() {
+  return apiRequest<TransportOrderDefaults>(`${API}.get_transport_order_defaults`)
+}
+
+export function searchBillingCustomers(search?: string) {
+  return apiRequest<BillingCustomerOption[]>(`${API}.search_billing_customers`, {
+    method: 'POST',
+    body: JSON.stringify({ search: search || '', limit: 20 }),
+  })
+}
+
+export function createBillingCustomer(payload: { customer_name: string; customer_type?: string }) {
+  return apiRequest<BillingCustomerOption & { already_existed?: number }>(`${API}.create_billing_customer`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function createPortalTransportCustomer(payload: {
+  customer_name: string
+  phone_number: string
+  email?: string
+  delivery_address?: string
+  city?: string
+  send_otp?: number
+  zones?: MasterZoneRow[]
+}) {
+  return apiRequest<
+    TransportCustomerOption & {
+      delivery_address?: string
+      city?: string
+      send_otp?: number
+      zones?: MasterZoneRow[]
+    }
+  >(`${API}.create_portal_transport_customer`, {
+    method: 'POST',
+    body: JSON.stringify({
+      ...payload,
+      zones: payload.zones ? JSON.stringify(payload.zones) : undefined,
+    }),
+  })
+}
+
+export function searchAddressZones(search?: string) {
+  return apiRequest<MasterAddressZoneRow[]>(`${API}.search_address_zones`, {
+    method: 'POST',
+    body: JSON.stringify({ search: search || '', limit: 20 }),
+  })
+}
+
+export function searchTransportCustomers(search?: string) {
+  return apiRequest<TransportCustomerOption[]>(`${API}.search_transport_customers`, {
+    method: 'POST',
+    body: JSON.stringify({ search: search || '', limit: 20 }),
+  })
+}
+
+export function searchLinkableDeliveryNotes(search?: string) {
+  return apiRequest<LinkableDeliveryNoteOption[]>(`${API}.search_linkable_delivery_notes`, {
+    method: 'POST',
+    body: JSON.stringify({ search: search || '', limit: 20 }),
+  })
+}
+
+export function createStandaloneTransportOrder(payload: {
+  customer: string
+  rate?: number
+  qty?: number
+  delivery_note?: string
+  external_delivery_note?: string
+  note?: string
+  transport_customer?: string
+  transport_customer_name?: string
+  transport_phone?: string
+  transport_email?: string
+  transport_address?: string
+}) {
+  return apiRequest<{
+    name: string
+    customer: string
+    customer_name?: string
+    grand_total?: number
+    currency?: string
+    custom_delivery_note_to_be_transported?: string
+  }>(`${API}.create_standalone_transport_order`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
   })
 }
 
@@ -233,6 +412,11 @@ export function updateTransportOrder(
     custom_last_customer_invoice_date?: string
     custom_last_customer_delivery_note?: string
     custom_last_customer_delivery_note_date?: string
+    transport_customer?: string
+    transport_customer_name?: string
+    transport_phone?: string
+    transport_email?: string
+    transport_address?: string
   }
 ) {
   return apiRequest(`${API}.update_transport_order`, {
@@ -507,5 +691,200 @@ export function trackDeliveries(query?: string, status = 'In Transit') {
   return apiRequest<TrackerRow[]>(`${API}.track_deliveries`, {
     method: 'POST',
     body: JSON.stringify({ query: query || '', status: status || 'In Transit' }),
+  })
+}
+
+export interface TransportSettingsPayload {
+  otp_expiry_minutes?: number
+  ultra_transport_company?: string
+  ultra_transport_email?: string
+  default_transport_item?: string
+  default_sales_taxes_template?: string
+  default_transport_charges?: number
+  default_country_code?: string
+  branch?: string
+  cost_center?: string
+  default_print_format?: string
+  default_letter_head?: string
+  enable_email?: number
+  create_transport_order_on_dnote_submission?: number
+  delivery_note_workflow_action_to_create_order?: string
+  enable_sms?: number
+  sms_provider?: string
+  sms_sender_id?: string
+  sms_api_url?: string
+  sms_api_key?: string
+  sms_api_key_set?: boolean
+}
+
+export function getPortalTransportSettings() {
+  return apiRequest<TransportSettingsPayload>(`${API}.get_portal_transport_settings`)
+}
+
+export function updatePortalTransportSettings(payload: Record<string, string | number>) {
+  return apiRequest<TransportSettingsPayload>(`${API}.update_portal_transport_settings`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function searchSettingsLinkOptions(doctype: string, search?: string) {
+  return apiRequest<{ name: string; label: string }[]>(`${API}.search_settings_link_options`, {
+    method: 'POST',
+    body: JSON.stringify({ doctype, search: search || '', limit: 20 }),
+  })
+}
+
+export interface MasterTransportCustomerRow {
+  name: string
+  customer_name: string
+  phone_number: string
+  email?: string
+  city?: string
+  send_otp?: number
+  zone_count?: number
+  default_zone?: string
+  modified?: string
+}
+
+export interface MasterZoneRow {
+  name?: string
+  zone: string
+  city?: string
+  transport_charges?: number
+  default?: number
+  more_information?: string
+}
+
+export interface MasterTransportCustomerDetail extends MasterTransportCustomerRow {
+  contact_person?: string
+  contact_phone?: string
+  delivery_address?: string
+  state?: string
+  postal_code?: string
+  country?: string
+  notes?: string
+  zones?: MasterZoneRow[]
+}
+
+export interface MasterAddressZoneRow {
+  name: string
+  zone_name?: string
+  zone_city?: string
+  transport_charges?: number
+  more_information?: string
+  modified?: string
+}
+
+export function listMasterTransportCustomers(search?: string) {
+  return apiRequest<MasterTransportCustomerRow[]>(`${API}.list_master_transport_customers`, {
+    method: 'POST',
+    body: JSON.stringify({ search: search || '', limit: 100 }),
+  })
+}
+
+export function getMasterTransportCustomer(name: string) {
+  return apiRequest<MasterTransportCustomerDetail>(`${API}.get_master_transport_customer`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
+}
+
+export function createMasterTransportCustomer(payload: {
+  customer_name: string
+  phone_number: string
+  email?: string
+  contact_person?: string
+  contact_phone?: string
+  send_otp?: number
+  delivery_address?: string
+  city?: string
+  state?: string
+  postal_code?: string
+  country?: string
+  notes?: string
+  zones?: MasterZoneRow[]
+}) {
+  return apiRequest<MasterTransportCustomerDetail>(`${API}.create_master_transport_customer`, {
+    method: 'POST',
+    body: JSON.stringify({
+      ...payload,
+      zones: payload.zones ? JSON.stringify(payload.zones) : undefined,
+    }),
+  })
+}
+
+export function updateMasterTransportCustomer(
+  name: string,
+  payload: {
+    customer_name?: string
+    phone_number?: string
+    email?: string
+    contact_person?: string
+    contact_phone?: string
+    send_otp?: number
+    delivery_address?: string
+    city?: string
+    state?: string
+    postal_code?: string
+    country?: string
+    notes?: string
+    zones?: MasterZoneRow[]
+  }
+) {
+  return apiRequest<MasterTransportCustomerDetail>(`${API}.update_master_transport_customer`, {
+    method: 'POST',
+    body: JSON.stringify({
+      name,
+      ...payload,
+      zones: payload.zones ? JSON.stringify(payload.zones) : undefined,
+    }),
+  })
+}
+
+export function deleteMasterTransportCustomer(name: string) {
+  return apiRequest<{ ok: number; name: string }>(`${API}.delete_master_transport_customer`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
+}
+
+export function listMasterAddressZones(search?: string) {
+  return apiRequest<MasterAddressZoneRow[]>(`${API}.list_master_address_zones`, {
+    method: 'POST',
+    body: JSON.stringify({ search: search || '', limit: 100 }),
+  })
+}
+
+export function createMasterAddressZone(payload: {
+  zone_name: string
+  zone_city?: string
+  transport_charges?: number
+  more_information?: string
+}) {
+  return apiRequest<MasterAddressZoneRow>(`${API}.create_master_address_zone`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateMasterAddressZone(
+  name: string,
+  payload: {
+    zone_city?: string
+    transport_charges?: number
+    more_information?: string
+  }
+) {
+  return apiRequest<MasterAddressZoneRow>(`${API}.update_master_address_zone`, {
+    method: 'POST',
+    body: JSON.stringify({ name, ...payload }),
+  })
+}
+
+export function deleteMasterAddressZone(name: string) {
+  return apiRequest<{ ok: number; name: string }>(`${API}.delete_master_address_zone`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
   })
 }

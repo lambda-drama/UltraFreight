@@ -14,6 +14,11 @@ const ALL_VIEWS = [
   'confirmation-logs',
   'sms-logs',
   'email-logs',
+  'transport-settings',
+  'transport-customers',
+  'master-drivers',
+  'master-trucks',
+  'address-zones',
   'driver',
 ]
 

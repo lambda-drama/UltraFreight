@@ -6,28 +6,61 @@ import { toast } from 'sonner'
 import {
   assignDispatchDriver,
   cancelTransportOrder,
+  createBillingCustomer,
+  createPortalTransportCustomer,
+  createStandaloneTransportOrder,
   createTransportInvoice,
   getDrivers,
+  getTransportOrderDefaults,
   getTransportOrders,
   getVehicles,
   markTransportOrderDelivered,
   regenerateTransportOtp,
   rescheduleTransportOrder,
+  searchAddressZones,
+  searchBillingCustomers,
+  searchLinkableDeliveryNotes,
+  searchTransportCustomers,
   submitTransportOrder,
   updateTransportOrder,
   uploadAttachedFile,
+  type BillingCustomerOption,
+  type LinkableDeliveryNoteOption,
+  type MasterAddressZoneRow,
+  type MasterZoneRow,
+  type TransportCustomerOption,
   type TransportOrderRow,
 } from '@/services/transport'
 import { Badge, Button, DataTable, Input, Label, Modal, PageHeader, Select, Textarea } from '@/components/ui/primitives'
+import { SearchCombobox } from '@/components/ui/search-combobox'
 import { ActionMenu, type ActionMenuItem } from '@/components/ui/action-menu'
 import { FilterToolbar, matchesText } from '@/components/layout/filter-toolbar'
 import { ListExportActions } from '@/components/ui/list-export-actions'
 import { formatMoney, openPrintView } from '@/lib/utils'
 import type { ListExportColumn } from '@/lib/list-export'
 import { useAuth } from '@/contexts/auth-context'
-import { Ban, CalendarClock, CheckCircle2, FilePlus2, KeyRound, Loader2, PackageCheck, Pencil, Printer } from 'lucide-react'
+import { Ban, CalendarClock, CheckCircle2, FilePlus2, KeyRound, Loader2, PackageCheck, Pencil, Plus, Printer, Trash2 } from 'lucide-react'
 
 const MANAGER_DELIVERY_ROLES = ['Sales Manager', 'System Manager', 'Administrator', 'Manager']
+
+type QuickZoneDraft = {
+  key: string
+  zone: string
+  city: string
+  transport_charges: string
+  default: boolean
+}
+
+function newQuickZoneDraft(partial?: Partial<QuickZoneDraft>): QuickZoneDraft {
+  return {
+    key: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    zone: '',
+    city: '',
+    transport_charges: '',
+    default: false,
+    ...partial,
+  }
+}
 
 function statusBadge(status?: string) {
   if (status === 'Completed') return 'success'
@@ -90,6 +123,65 @@ export default function TransportOrdersPage() {
   const [cancelOrder, setCancelOrder] = useState<TransportOrderRow | null>(null)
   const [cancelReason, setCancelReason] = useState('')
   const [cancelling, setCancelling] = useState<string | null>(null)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createCustomer, setCreateCustomer] = useState('')
+  const [createRate, setCreateRate] = useState('')
+  const [createQty, setCreateQty] = useState('1')
+  const [createDeliveryNoteMode, setCreateDeliveryNoteMode] = useState<'system' | 'reference'>('system')
+  const [createDeliveryNoteSearch, setCreateDeliveryNoteSearch] = useState('')
+  const [createExternalDeliveryNote, setCreateExternalDeliveryNote] = useState('')
+  const [createTransportCustomer, setCreateTransportCustomer] = useState('')
+  const [createFinalCustomerName, setCreateFinalCustomerName] = useState('')
+  const [createFinalPhone, setCreateFinalPhone] = useState('')
+  const [createFinalEmail, setCreateFinalEmail] = useState('')
+  const [createFinalAddress, setCreateFinalAddress] = useState('')
+  const [createNote, setCreateNote] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [customerSuggestions, setCustomerSuggestions] = useState<BillingCustomerOption[]>([])
+  const [deliveryNoteSuggestions, setDeliveryNoteSuggestions] = useState<LinkableDeliveryNoteOption[]>([])
+  const [transportCustomerSuggestions, setTransportCustomerSuggestions] = useState<TransportCustomerOption[]>([])
+  const [editFinalCustomerName, setEditFinalCustomerName] = useState('')
+  const [editFinalPhone, setEditFinalPhone] = useState('')
+  const [editFinalEmail, setEditFinalEmail] = useState('')
+  const [editFinalAddress, setEditFinalAddress] = useState('')
+  const [editTransportCustomer, setEditTransportCustomer] = useState('')
+  const [quickBillingOpen, setQuickBillingOpen] = useState(false)
+  const [quickBillingName, setQuickBillingName] = useState('')
+  const [savingQuickBilling, setSavingQuickBilling] = useState(false)
+  const [quickTransportOpen, setQuickTransportOpen] = useState(false)
+  const [quickTransportForm, setQuickTransportForm] = useState({
+    customer_name: '',
+    phone_number: '',
+    email: '',
+    delivery_address: '',
+    city: '',
+    send_otp: true,
+  })
+  const [quickTransportZones, setQuickTransportZones] = useState<QuickZoneDraft[]>([])
+  const [quickZoneQuery, setQuickZoneQuery] = useState('')
+  const [zoneCatalog, setZoneCatalog] = useState<MasterAddressZoneRow[]>([])
+  const [savingQuickTransport, setSavingQuickTransport] = useState(false)
+  const { data: createDefaults } = useSWR(createOpen ? 'transport-order-defaults' : null, getTransportOrderDefaults)
+
+  const quickZoneOptions = useMemo(() => {
+    const q = quickZoneQuery.trim().toLowerCase()
+    return zoneCatalog
+      .filter((z) => {
+        if (!q) return true
+        return (
+          z.name.toLowerCase().includes(q) ||
+          (z.zone_city || '').toLowerCase().includes(q) ||
+          (z.zone_name || '').toLowerCase().includes(q)
+        )
+      })
+      .map((z) => ({
+        value: z.name,
+        label: z.zone_name || z.name,
+        description: [z.zone_city, z.transport_charges != null ? String(z.transport_charges) : '']
+          .filter(Boolean)
+          .join(' · '),
+      }))
+  }, [zoneCatalog, quickZoneQuery])
 
   const rows = useMemo(() => {
     return (data || []).filter((order) => {
@@ -139,6 +231,11 @@ export default function TransportOrdersPage() {
     setDriver(order.driver || '')
     setVehicleNo(order.vehicle_no || '')
     setAddressZone(defaultZone || '')
+    setEditTransportCustomer(order.transport_customer || '')
+    setEditFinalCustomerName(order.transport_customer_name || '')
+    setEditFinalPhone(order.transport_phone || '')
+    setEditFinalEmail(order.transport_email || '')
+    setEditFinalAddress(order.transport_address || '')
     setLastCustomerInvoice(order.custom_last_customer_invoice || '')
     setLastCustomerInvoiceDate(order.custom_last_customer_invoice_date || '')
     setLastCustomerDn(order.custom_last_customer_delivery_note || '')
@@ -153,18 +250,313 @@ export default function TransportOrdersPage() {
     }
   }
 
+  async function openCreateStandalone() {
+    setCreateCustomer('')
+    setCreateDeliveryNoteMode('system')
+    setCreateDeliveryNoteSearch('')
+    setCreateExternalDeliveryNote('')
+    setCreateTransportCustomer('')
+    setCreateFinalCustomerName('')
+    setCreateFinalPhone('')
+    setCreateFinalEmail('')
+    setCreateFinalAddress('')
+    setCreateNote('')
+    setCreateQty('1')
+    setDeliveryNoteSuggestions([])
+    setTransportCustomerSuggestions([])
+    setCreateOpen(true)
+    try {
+      const [defaults, customers, deliveryNotes, transportCustomers] = await Promise.all([
+        getTransportOrderDefaults(),
+        searchBillingCustomers(''),
+        searchLinkableDeliveryNotes(''),
+        searchTransportCustomers(''),
+      ])
+      setCreateRate(String(defaults.default_transport_charges ?? ''))
+      setCustomerSuggestions(customers)
+      setDeliveryNoteSuggestions(deliveryNotes)
+      setTransportCustomerSuggestions(transportCustomers)
+    } catch {
+      setCreateRate('')
+      setCustomerSuggestions([])
+      setDeliveryNoteSuggestions([])
+      setTransportCustomerSuggestions([])
+    }
+  }
+
+  async function refreshCustomerSuggestions(search: string) {
+    try {
+      const customers = await searchBillingCustomers(search)
+      setCustomerSuggestions(customers)
+    } catch {
+      setCustomerSuggestions([])
+    }
+  }
+
+  async function refreshDeliveryNoteSuggestions(search: string) {
+    try {
+      const deliveryNotes = await searchLinkableDeliveryNotes(search)
+      setDeliveryNoteSuggestions(deliveryNotes)
+      const exact = deliveryNotes.find((row) => row.name === search.trim())
+      if (exact && !exact.already_linked) {
+        applyDeliveryNoteFinalCustomer(exact)
+      }
+    } catch {
+      setDeliveryNoteSuggestions([])
+    }
+  }
+
+  async function refreshTransportCustomerSuggestions(search: string) {
+    try {
+      const rows = await searchTransportCustomers(search)
+      setTransportCustomerSuggestions(rows)
+    } catch {
+      setTransportCustomerSuggestions([])
+    }
+  }
+
+  function applyDeliveryNoteFinalCustomer(row: LinkableDeliveryNoteOption) {
+    if (row.transport_customer) setCreateTransportCustomer(row.transport_customer)
+    if (row.transport_customer_name) setCreateFinalCustomerName(row.transport_customer_name)
+    if (row.transport_phone) setCreateFinalPhone(row.transport_phone)
+    if (row.transport_email) setCreateFinalEmail(row.transport_email || '')
+    if (row.transport_address) setCreateFinalAddress(row.transport_address || '')
+  }
+
+  function applyTransportCustomerSelection(value: string, target: 'create' | 'edit' = 'create') {
+    const match = transportCustomerSuggestions.find(
+      (row) => row.name === value || row.customer_name === value
+    )
+    if (!match) {
+      if (target === 'create') {
+        setCreateTransportCustomer('')
+        setCreateFinalCustomerName(value)
+      } else {
+        setEditTransportCustomer('')
+        setEditFinalCustomerName(value)
+      }
+      return
+    }
+    if (target === 'create') {
+      setCreateTransportCustomer(match.name)
+      setCreateFinalCustomerName(match.customer_name || match.name)
+      setCreateFinalPhone(match.phone_number || '')
+      setCreateFinalEmail(match.email || '')
+      setCreateFinalAddress(match.delivery_address || '')
+    } else {
+      setEditTransportCustomer(match.name)
+      setEditFinalCustomerName(match.customer_name || match.name)
+      setEditFinalPhone(match.phone_number || '')
+      setEditFinalEmail(match.email || '')
+      setEditFinalAddress(match.delivery_address || '')
+    }
+  }
+
+  async function handleQuickCreateBilling(e: React.FormEvent) {
+    e.preventDefault()
+    if (!quickBillingName.trim()) {
+      toast.error('Enter a customer name')
+      return
+    }
+    setSavingQuickBilling(true)
+    try {
+      const created = await createBillingCustomer({ customer_name: quickBillingName.trim() })
+      setCreateCustomer(created.name)
+      setCustomerSuggestions((prev) => {
+        if (prev.some((row) => row.name === created.name)) return prev
+        return [{ name: created.name, customer_name: created.customer_name }, ...prev]
+      })
+      toast.success(
+        created.already_existed
+          ? `Using existing customer ${created.name}`
+          : `Billing customer ${created.name} created`
+      )
+      setQuickBillingOpen(false)
+      setQuickBillingName('')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not create billing customer')
+    } finally {
+      setSavingQuickBilling(false)
+    }
+  }
+
+  async function handleQuickCreateTransportCustomer(e: React.FormEvent) {
+    e.preventDefault()
+    if (!quickTransportForm.customer_name.trim() || !quickTransportForm.phone_number.trim()) {
+      toast.error('Name and phone are required')
+      return
+    }
+    const zonePayload: MasterZoneRow[] = quickTransportZones
+      .filter((row) => row.zone.trim())
+      .map((row) => ({
+        zone: row.zone.trim(),
+        city: row.city.trim() || undefined,
+        transport_charges: row.transport_charges.trim() ? Number(row.transport_charges) : undefined,
+        default: row.default ? 1 : 0,
+      }))
+    setSavingQuickTransport(true)
+    try {
+      const created = await createPortalTransportCustomer({
+        customer_name: quickTransportForm.customer_name.trim(),
+        phone_number: quickTransportForm.phone_number.trim(),
+        email: quickTransportForm.email.trim() || undefined,
+        delivery_address: quickTransportForm.delivery_address.trim() || undefined,
+        city: quickTransportForm.city.trim() || undefined,
+        send_otp: quickTransportForm.send_otp ? 1 : 0,
+        zones: zonePayload,
+      })
+      setCreateTransportCustomer(created.name)
+      setCreateFinalCustomerName(created.customer_name || created.name)
+      setCreateFinalPhone(created.phone_number || '')
+      setCreateFinalEmail(created.email || '')
+      setCreateFinalAddress(created.delivery_address || '')
+      setTransportCustomerSuggestions((prev) => {
+        if (prev.some((row) => row.name === created.name)) return prev
+        return [
+          {
+            name: created.name,
+            customer_name: created.customer_name,
+            phone_number: created.phone_number,
+            email: created.email,
+            delivery_address: created.delivery_address,
+          },
+          ...prev,
+        ]
+      })
+      toast.success(`Transport customer ${created.name} created`)
+      setQuickTransportOpen(false)
+      setQuickTransportForm({
+        customer_name: '',
+        phone_number: '',
+        email: '',
+        delivery_address: '',
+        city: '',
+        send_otp: true,
+      })
+      setQuickTransportZones([])
+      setQuickZoneQuery('')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not create transport customer')
+    } finally {
+      setSavingQuickTransport(false)
+    }
+  }
+
+  function addQuickZoneRow() {
+    setQuickTransportZones((prev) => [...prev, newQuickZoneDraft({ default: prev.length === 0 })])
+  }
+
+  function updateQuickZoneRow(key: string, patch: Partial<QuickZoneDraft>) {
+    setQuickTransportZones((prev) =>
+      prev.map((row) => {
+        if (row.key !== key) {
+          if (patch.default) return { ...row, default: false }
+          return row
+        }
+        return { ...row, ...patch }
+      })
+    )
+  }
+
+  function applyQuickZoneSelection(key: string, zoneName: string) {
+    const match = zoneCatalog.find((z) => z.name === zoneName)
+    updateQuickZoneRow(key, {
+      zone: zoneName,
+      city: match?.zone_city || '',
+      transport_charges:
+        match?.transport_charges != null && match.transport_charges !== undefined
+          ? String(match.transport_charges)
+          : '',
+    })
+  }
+
+  function removeQuickZoneRow(key: string) {
+    setQuickTransportZones((prev) => {
+      const next = prev.filter((row) => row.key !== key)
+      if (next.length && !next.some((row) => row.default)) {
+        next[0] = { ...next[0], default: true }
+      }
+      return next
+    })
+  }
+
+  async function loadZoneCatalog(search = '') {
+    try {
+      const rows = await searchAddressZones(search)
+      setZoneCatalog(rows || [])
+    } catch {
+      // Keep previous catalog on search failure
+    }
+  }
+
+  function openQuickTransportCreate() {
+    setQuickTransportForm({
+      customer_name: createFinalCustomerName.trim(),
+      phone_number: createFinalPhone.trim(),
+      email: createFinalEmail.trim(),
+      delivery_address: createFinalAddress.trim(),
+      city: '',
+      send_otp: true,
+    })
+    setQuickTransportZones([])
+    setQuickZoneQuery('')
+    setQuickTransportOpen(true)
+    void loadZoneCatalog('')
+  }
+
+  async function handleCreateStandalone(e: React.FormEvent) {
+    e.preventDefault()
+    if (!createCustomer.trim()) {
+      toast.error('Select a billing customer')
+      return
+    }
+    if (createFinalCustomerName.trim() && !createFinalPhone.trim()) {
+      toast.error('Final transport customer phone is required when a name is set')
+      return
+    }
+    if (createFinalPhone.trim() && !createFinalCustomerName.trim()) {
+      toast.error('Final transport customer name is required when a phone is set')
+      return
+    }
+    setCreating(true)
+    try {
+      const result = await createStandaloneTransportOrder({
+        customer: createCustomer.trim(),
+        rate: createRate.trim() ? Number(createRate) : undefined,
+        qty: Number(createQty) || 1,
+        delivery_note:
+          createDeliveryNoteMode === 'system'
+            ? createDeliveryNoteSearch.trim() || undefined
+            : undefined,
+        external_delivery_note:
+          createDeliveryNoteMode === 'reference'
+            ? createExternalDeliveryNote.trim() || undefined
+            : undefined,
+        note: createNote.trim() || undefined,
+        transport_customer: createTransportCustomer.trim() || undefined,
+        transport_customer_name: createFinalCustomerName.trim() || undefined,
+        transport_phone: createFinalPhone.trim() || undefined,
+        transport_email: createFinalEmail.trim() || undefined,
+        transport_address: createFinalAddress.trim() || undefined,
+      })
+      toast.success(`Draft transport order ${result.name} created`)
+      setCreateOpen(false)
+      mutate()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not create transport order')
+    } finally {
+      setCreating(false)
+    }
+  }
+
   function openApprove(order: TransportOrderRow) {
-    if (!order.driver) {
+    const linkedDn = Boolean(order.custom_delivery_note_to_be_transported)
+    if (linkedDn && !order.driver) {
       toast.error('Choose a driver before approving — use Edit to assign a driver.')
       openEdit(order)
       return
     }
-    if (!order.vehicle_no) {
-      toast.error('Choose a truck before approving — use Edit to assign a truck.')
-      openEdit(order)
-      return
-    }
-    if ((order.zones || []).length > 0 && !order.custom_address_zone) {
+    if (linkedDn && (order.zones || []).length > 0 && !order.custom_address_zone) {
       toast.error('Choose an address zone before approving.')
       openEdit(order)
       return
@@ -180,12 +572,12 @@ export default function TransportOrdersPage() {
       toast.error('Select an address zone')
       return
     }
-    if (!driver) {
+    if (editing.custom_delivery_note_to_be_transported && !driver) {
       toast.error('Select a driver')
       return
     }
-    if (!vehicleNo) {
-      toast.error('Select a truck')
+    if (editFinalCustomerName.trim() && !editFinalPhone.trim()) {
+      toast.error('Final transport customer phone is required when a name is set')
       return
     }
     setSaving(true)
@@ -198,6 +590,11 @@ export default function TransportOrdersPage() {
         custom_last_customer_invoice_date: lastCustomerInvoiceDate,
         custom_last_customer_delivery_note: lastCustomerDn,
         custom_last_customer_delivery_note_date: lastCustomerDnDate,
+        transport_customer: editTransportCustomer.trim() || undefined,
+        transport_customer_name: editFinalCustomerName.trim() || undefined,
+        transport_phone: editFinalPhone.trim() || undefined,
+        transport_email: editFinalEmail.trim() || undefined,
+        transport_address: editFinalAddress.trim() || undefined,
       })
       const dn = editing.custom_delivery_note_to_be_transported
       if (dn && driver) {
@@ -214,17 +611,19 @@ export default function TransportOrdersPage() {
   }
 
   async function confirmApprove() {
-    if (!approveOrder?.driver) {
+    if (approveOrder?.custom_delivery_note_to_be_transported && !approveOrder?.driver) {
       toast.error('Choose a driver before approving.')
       return
     }
-    setApproving(approveOrder.name)
+    setApproving(approveOrder!.name)
     try {
-      await submitTransportOrder(approveOrder.name, approveSendOtp)
+      await submitTransportOrder(approveOrder!.name, approveSendOtp)
       toast.success(
-        approveSendOtp
-          ? 'Order approved — OTP generated and delivery is In Transit'
-          : 'Order approved — delivery is In Transit (OTP skipped)'
+        approveOrder!.custom_delivery_note_to_be_transported
+          ? approveSendOtp
+            ? 'Order approved — OTP generated and delivery is In Transit'
+            : 'Order approved — delivery is In Transit (OTP skipped)'
+          : 'Standalone transport order submitted'
       )
       setApproveOrder(null)
       mutate()
@@ -384,11 +783,22 @@ export default function TransportOrdersPage() {
         title="Transport Orders"
         description="Assign driver and customer invoice refs, approve to dispatch, then create the transport invoice after delivery"
         action={
-          <ListExportActions
-            title="Transport Orders"
-            columns={exportColumns}
-            rows={rows as unknown as Record<string, unknown>[]}
-          />
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              onClick={openCreateStandalone}
+              className="h-10 w-10 px-0"
+              title="New transport order"
+              aria-label="New transport order"
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+            <ListExportActions
+              title="Transport Orders"
+              columns={exportColumns}
+              rows={rows as unknown as Record<string, unknown>[]}
+            />
+          </div>
         }
       />
 
@@ -483,7 +893,6 @@ export default function TransportOrdersPage() {
               render: (row) => {
                 const order = row as unknown as TransportOrderRow
                 const hasDriver = Boolean(order.driver)
-                const hasTruck = Boolean(order.vehicle_no)
                 const isDraft = Number(order.docstatus) === 0
                 const isSubmitted = Number(order.docstatus) === 1
                 const pendingInvoice = order.delivery_status === 'Pending Invoicing'
@@ -513,19 +922,14 @@ export default function TransportOrdersPage() {
                   })
                   menuItems.push({
                     key: 'approve',
-                    label:
-                      hasDriver && hasTruck
-                        ? 'Approve order'
-                        : !hasDriver
-                          ? 'Assign driver to approve'
-                          : 'Assign truck to approve',
+                    label: hasDriver ? 'Approve order' : 'Assign driver to approve',
                     icon:
                       approving === order.name ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
                         <CheckCircle2 className="h-4 w-4" />
                       ),
-                    disabled: !hasDriver || !hasTruck || approving === order.name,
+                    disabled: !hasDriver || approving === order.name,
                     onClick: () => openApprove(order),
                   })
                   menuItems.push({
@@ -668,37 +1072,101 @@ export default function TransportOrdersPage() {
       >
         <form onSubmit={handleSave} className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Delivery Note: {editing?.custom_delivery_note_to_be_transported}
+            {editing?.custom_delivery_note_to_be_transported
+              ? `Delivery Note: ${editing.custom_delivery_note_to_be_transported}`
+              : 'Standalone order — link a delivery note when creating to assign a driver.'}
           </p>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <Label>Driver</Label>
-              <Select value={driver} onChange={(e) => onDriverChange(e.target.value)} required>
-                <option value="">Select driver</option>
-                {(drivers || []).map((d) => (
-                  <option key={d.name} value={d.name}>
-                    {d.full_name}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div>
-              <Label>Truck</Label>
-              <Select value={vehicleNo} onChange={(e) => setVehicleNo(e.target.value)} required>
-                <option value="">Select truck</option>
-                {(vehicles || []).map((v) => (
-                  <option key={v.name} value={v.name}>
-                    {v.license_plate || v.name}
-                    {v.make || v.model ? ` · ${[v.make, v.model].filter(Boolean).join(' ')}` : ''}
-                  </option>
-                ))}
-              </Select>
-              {!(vehicles || []).length ? (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  No vehicles found. Add trucks under Vehicle in ERPNext.
+            {editing?.custom_delivery_note_to_be_transported ? (
+              <>
+                <div>
+                  <Label>Driver</Label>
+                  <Select value={driver} onChange={(e) => onDriverChange(e.target.value)} required>
+                    <option value="">Select driver</option>
+                    {(drivers || []).map((d) => (
+                      <option key={d.name} value={d.name}>
+                        {d.full_name}
+                      </option>
+                    ))}
+                  </Select>
+                  {!(drivers || []).length ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      No active drivers found for your transport company.
+                    </p>
+                  ) : null}
+                </div>
+                <div>
+                  <Label>Truck (optional)</Label>
+                  <Select value={vehicleNo} onChange={(e) => setVehicleNo(e.target.value)}>
+                    <option value="">Select truck</option>
+                    {(vehicles || []).map((v) => (
+                      <option key={v.name} value={v.name}>
+                        {v.license_plate || v.name}
+                        {v.make || v.model ? ` · ${[v.make, v.model].filter(Boolean).join(' ')}` : ''}
+                      </option>
+                    ))}
+                  </Select>
+                  {!(vehicles || []).length ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      No vehicles found — you can still save with a driver only.
+                    </p>
+                  ) : null}
+                </div>
+              </>
+            ) : null}
+
+            <div className="sm:col-span-2 rounded-xl border border-border p-3 space-y-3">
+              <div>
+                <p className="text-sm font-medium">Final transport customer</p>
+                <p className="text-xs text-muted-foreground">
+                  {editing?.custom_delivery_note_to_be_transported
+                    ? 'Updates the linked delivery note final customer details.'
+                    : 'Stored on this standalone transport order.'}
                 </p>
-              ) : null}
+              </div>
+              <div>
+                <Label>Customer name</Label>
+                <SearchCombobox
+                  value={editFinalCustomerName}
+                  onChange={(value) => {
+                    setEditFinalCustomerName(value)
+                    setEditTransportCustomer('')
+                    void refreshTransportCustomerSuggestions(value)
+                  }}
+                  onSearch={(value) => void refreshTransportCustomerSuggestions(value)}
+                  onSelect={(option) => applyTransportCustomerSelection(option.value, 'edit')}
+                  options={transportCustomerSuggestions.map((row) => ({
+                    value: row.name,
+                    label: row.customer_name || row.name,
+                    description: [row.phone_number, row.name].filter(Boolean).join(' · '),
+                  }))}
+                  placeholder="Search or type final customer name"
+                  emptyText="No transport customers — type a new name"
+                />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <Label>Phone</Label>
+                  <Input value={editFinalPhone} onChange={(e) => setEditFinalPhone(e.target.value)} />
+                </div>
+                <div>
+                  <Label>Email</Label>
+                  <Input
+                    type="email"
+                    value={editFinalEmail}
+                    onChange={(e) => setEditFinalEmail(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div>
+                <Label>Delivery address</Label>
+                <Textarea
+                  value={editFinalAddress}
+                  onChange={(e) => setEditFinalAddress(e.target.value)}
+                  rows={2}
+                />
+              </div>
             </div>
 
             {(editing?.zones || []).length > 0 ? (
@@ -1137,6 +1605,474 @@ export default function TransportOrdersPage() {
             </div>
           </div>
         ) : null}
+      </Modal>
+
+      <Modal
+        open={createOpen}
+        title="New Transport Order"
+        onClose={() => {
+          if (creating) return
+          setCreateOpen(false)
+        }}
+      >
+        <form className="space-y-4" onSubmit={handleCreateStandalone}>
+          <p className="text-sm text-muted-foreground">
+            Create a standalone draft transport sales order under{' '}
+            <strong>{createDefaults?.transport_company || 'your transport company'}</strong>.
+            Link a delivery note optionally; leave it blank for billing-only orders.
+          </p>
+          <div>
+            <Label>Billing customer *</Label>
+            <SearchCombobox
+              value={createCustomer}
+              onChange={(value) => {
+                setCreateCustomer(value)
+                void refreshCustomerSuggestions(value)
+              }}
+              onSearch={(value) => void refreshCustomerSuggestions(value)}
+              onSelect={(option) => setCreateCustomer(option.value)}
+              options={customerSuggestions.map((row) => ({
+                value: row.name,
+                label: row.customer_name || row.name,
+                description: row.customer_name && row.customer_name !== row.name ? row.name : undefined,
+              }))}
+              placeholder="Search billing customer…"
+              required
+              disabled={creating}
+              emptyText="No customers found"
+              endAction={
+                <button
+                  type="button"
+                  title="New billing customer"
+                  aria-label="New billing customer"
+                  disabled={creating}
+                  className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-45"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    setQuickBillingName(createCustomer.trim())
+                    setQuickBillingOpen(true)
+                  }}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              }
+            />
+          </div>
+          <div className="rounded-xl border border-border p-3 space-y-3">
+            <div>
+              <p className="text-sm font-medium">Final transport customer</p>
+              <p className="mb-3 text-xs text-muted-foreground">
+                The end customer receiving the goods. Pick an existing Transport Customer or create one.
+              </p>
+            </div>
+            <div>
+              <Label>Customer name</Label>
+              <SearchCombobox
+                value={createFinalCustomerName}
+                onChange={(value) => {
+                  setCreateFinalCustomerName(value)
+                  setCreateTransportCustomer('')
+                  void refreshTransportCustomerSuggestions(value)
+                }}
+                onSearch={(value) => void refreshTransportCustomerSuggestions(value)}
+                onSelect={(option) => applyTransportCustomerSelection(option.value, 'create')}
+                options={transportCustomerSuggestions.map((row) => ({
+                  value: row.name,
+                  label: row.customer_name || row.name,
+                  description: [row.phone_number, row.name].filter(Boolean).join(' · '),
+                }))}
+                placeholder="Search or type final customer name"
+                disabled={creating}
+                emptyText="No transport customers — use + to create"
+                endAction={
+                  <button
+                    type="button"
+                    title="New transport customer"
+                    aria-label="New transport customer"
+                    disabled={creating}
+                    className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-45"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={openQuickTransportCreate}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                }
+              />
+              {createTransportCustomer ? (
+                <p className="mt-1 text-xs text-muted-foreground">Linked: {createTransportCustomer}</p>
+              ) : null}
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <Label>Phone</Label>
+                <Input
+                  value={createFinalPhone}
+                  onChange={(e) => setCreateFinalPhone(e.target.value)}
+                  placeholder="07…"
+                  disabled={creating}
+                />
+              </div>
+              <div>
+                <Label>Email</Label>
+                <Input
+                  type="email"
+                  value={createFinalEmail}
+                  onChange={(e) => setCreateFinalEmail(e.target.value)}
+                  placeholder="optional"
+                  disabled={creating}
+                />
+              </div>
+            </div>
+            <div>
+              <Label>Delivery address</Label>
+              <Textarea
+                value={createFinalAddress}
+                onChange={(e) => setCreateFinalAddress(e.target.value)}
+                placeholder="Delivery address"
+                rows={2}
+                disabled={creating}
+              />
+            </div>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <Label>Rate</Label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={createRate}
+                onChange={(e) => setCreateRate(e.target.value)}
+                placeholder={String(createDefaults?.default_transport_charges ?? '0')}
+                disabled={creating}
+              />
+            </div>
+            <div>
+              <Label>Qty</Label>
+              <Input
+                type="number"
+                min="1"
+                step="1"
+                value={createQty}
+                onChange={(e) => setCreateQty(e.target.value)}
+                disabled={creating}
+              />
+            </div>
+          </div>
+          <div>
+            <Label>Delivery Note (optional)</Label>
+            <div className="mb-3 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant={createDeliveryNoteMode === 'system' ? 'default' : 'outline'}
+                onClick={() => setCreateDeliveryNoteMode('system')}
+                disabled={creating}
+                className="px-3 py-1.5 text-xs"
+              >
+                From system
+              </Button>
+              <Button
+                type="button"
+                variant={createDeliveryNoteMode === 'reference' ? 'default' : 'outline'}
+                onClick={() => setCreateDeliveryNoteMode('reference')}
+                disabled={creating}
+                className="px-3 py-1.5 text-xs"
+              >
+                Enter reference
+              </Button>
+            </div>
+            {createDeliveryNoteMode === 'system' ? (
+              <>
+                <p className="mb-2 text-xs text-muted-foreground">
+                  Pick from suggestions or type a delivery note name / number from ERPNext.
+                </p>
+                <SearchCombobox
+                  value={createDeliveryNoteSearch}
+                  onChange={(value) => {
+                    setCreateDeliveryNoteSearch(value)
+                    void refreshDeliveryNoteSuggestions(value)
+                  }}
+                  onSearch={(value) => void refreshDeliveryNoteSuggestions(value)}
+                  onSelect={(option) => {
+                    setCreateDeliveryNoteSearch(option.value)
+                    const match = deliveryNoteSuggestions.find((row) => row.name === option.value)
+                    if (match) applyDeliveryNoteFinalCustomer(match)
+                  }}
+                  options={deliveryNoteSuggestions
+                    .filter((row) => !row.already_linked)
+                    .map((row) => ({
+                      value: row.name,
+                      label: row.name,
+                      description: row.label || row.customer_name || undefined,
+                    }))}
+                  placeholder="DN-000123 or search by customer…"
+                  disabled={creating}
+                  emptyText="No linkable delivery notes"
+                />
+              </>
+            ) : (
+              <>
+                <p className="mb-2 text-xs text-muted-foreground">
+                  Store an external delivery note reference only. This does not link an ERPNext delivery note, so driver assignment is not available until you link one later.
+                </p>
+                <Input
+                  value={createExternalDeliveryNote}
+                  onChange={(e) => setCreateExternalDeliveryNote(e.target.value)}
+                  placeholder="External delivery note number"
+                  disabled={creating}
+                />
+              </>
+            )}
+          </div>
+          <div>
+            <Label>Note (optional)</Label>
+            <Textarea
+              value={createNote}
+              onChange={(e) => setCreateNote(e.target.value)}
+              placeholder="Standalone transport charge details"
+              rows={3}
+              disabled={creating}
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCreateOpen(false)}
+              disabled={creating}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={creating}>
+              {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Create draft order'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={quickBillingOpen}
+        title="New Billing Customer"
+        onClose={() => {
+          if (savingQuickBilling) return
+          setQuickBillingOpen(false)
+        }}
+      >
+        <form className="space-y-4" onSubmit={handleQuickCreateBilling}>
+          <p className="text-sm text-muted-foreground">
+            Creates an ERPNext Customer used as the billing party on the transport sales order.
+          </p>
+          <div>
+            <Label>Customer name *</Label>
+            <Input
+              value={quickBillingName}
+              onChange={(e) => setQuickBillingName(e.target.value)}
+              required
+              disabled={savingQuickBilling}
+              placeholder="e.g. Acme Traders Ltd"
+              autoFocus
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setQuickBillingOpen(false)}
+              disabled={savingQuickBilling}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={savingQuickBilling}>
+              {savingQuickBilling ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Create'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={quickTransportOpen}
+        title="New Transport Customer"
+        onClose={() => {
+          if (savingQuickTransport) return
+          setQuickTransportOpen(false)
+        }}
+        className="max-w-2xl"
+      >
+        <form className="space-y-4" onSubmit={handleQuickCreateTransportCustomer}>
+          <p className="text-sm text-muted-foreground">
+            Creates the final transport customer (end recipient) and fills the fields on this order.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <Label>Customer name *</Label>
+              <Input
+                value={quickTransportForm.customer_name}
+                onChange={(e) =>
+                  setQuickTransportForm({ ...quickTransportForm, customer_name: e.target.value })
+                }
+                required
+                disabled={savingQuickTransport}
+                autoFocus
+              />
+            </div>
+            <div>
+              <Label>Phone *</Label>
+              <Input
+                value={quickTransportForm.phone_number}
+                onChange={(e) =>
+                  setQuickTransportForm({ ...quickTransportForm, phone_number: e.target.value })
+                }
+                required
+                disabled={savingQuickTransport}
+              />
+            </div>
+            <div>
+              <Label>Email</Label>
+              <Input
+                type="email"
+                value={quickTransportForm.email}
+                onChange={(e) => setQuickTransportForm({ ...quickTransportForm, email: e.target.value })}
+                disabled={savingQuickTransport}
+              />
+            </div>
+            <div>
+              <Label>City</Label>
+              <Input
+                value={quickTransportForm.city}
+                onChange={(e) => setQuickTransportForm({ ...quickTransportForm, city: e.target.value })}
+                disabled={savingQuickTransport}
+              />
+            </div>
+          </div>
+          <div>
+            <Label>Delivery address</Label>
+            <Textarea
+              value={quickTransportForm.delivery_address}
+              onChange={(e) =>
+                setQuickTransportForm({ ...quickTransportForm, delivery_address: e.target.value })
+              }
+              rows={2}
+              disabled={savingQuickTransport}
+            />
+          </div>
+          <div className="rounded-xl border border-border p-3 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-medium">Zones</p>
+                <p className="text-xs text-muted-foreground">
+                  Assign address zones and optional charge overrides.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-9 w-9 px-0"
+                onClick={addQuickZoneRow}
+                disabled={savingQuickTransport}
+                aria-label="Add zone"
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+            </div>
+            {!quickTransportZones.length ? (
+              <p className="text-xs text-muted-foreground">No zones assigned yet.</p>
+            ) : (
+              <div className="space-y-3">
+                {quickTransportZones.map((row) => (
+                  <div key={row.key} className="grid gap-2 rounded-xl bg-muted/30 p-3 sm:grid-cols-12">
+                    <div className="sm:col-span-4">
+                      <Label>Zone</Label>
+                      <SearchCombobox
+                        value={row.zone}
+                        onChange={(value) => {
+                          setQuickZoneQuery(value)
+                          updateQuickZoneRow(row.key, { zone: value })
+                        }}
+                        onSearch={(value) => {
+                          setQuickZoneQuery(value)
+                          void loadZoneCatalog(value)
+                        }}
+                        onSelect={(option) => applyQuickZoneSelection(row.key, option.value)}
+                        options={quickZoneOptions}
+                        placeholder="Search zone…"
+                        disabled={savingQuickTransport}
+                        emptyText="No zones — create under Master → Zones"
+                      />
+                    </div>
+                    <div className="sm:col-span-4">
+                      <Label>City</Label>
+                      <Input
+                        value={row.city}
+                        onChange={(e) => updateQuickZoneRow(row.key, { city: e.target.value })}
+                        disabled={savingQuickTransport}
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <Label>Charge</Label>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={row.transport_charges}
+                        onChange={(e) =>
+                          updateQuickZoneRow(row.key, { transport_charges: e.target.value })
+                        }
+                        disabled={savingQuickTransport}
+                      />
+                    </div>
+                    <div className="flex items-end justify-between gap-2 sm:col-span-2">
+                      <label className="flex items-center gap-2 pb-2 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={row.default}
+                          onChange={(e) =>
+                            updateQuickZoneRow(row.key, { default: e.target.checked })
+                          }
+                          disabled={savingQuickTransport}
+                        />
+                        Default
+                      </label>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-9 w-9 px-0"
+                        onClick={() => removeQuickZoneRow(row.key)}
+                        disabled={savingQuickTransport}
+                        aria-label="Remove zone"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={quickTransportForm.send_otp}
+              onChange={(e) =>
+                setQuickTransportForm({ ...quickTransportForm, send_otp: e.target.checked })
+              }
+              disabled={savingQuickTransport}
+            />
+            Send OTP on dispatch
+          </label>
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setQuickTransportOpen(false)}
+              disabled={savingQuickTransport}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={savingQuickTransport}>
+              {savingQuickTransport ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Create'}
+            </Button>
+          </div>
+        </form>
       </Modal>
     </div>
   )

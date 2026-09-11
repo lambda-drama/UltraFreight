@@ -48,8 +48,7 @@ class UltraFreightSalesOrder(SalesOrder):
 	def validate_transport_order(self):
 		if not self.get("custom_is_transport_order"):
 			return
-		if not self.get("custom_delivery_note_to_be_transported"):
-			frappe.throw(_("Delivery Note To Be Transported is required when Is Transport Order is checked"))
+		# Delivery Note is optional for standalone transport orders (billing-only drafts).
 
 		settings = get_transport_settings()
 		transport_company = settings.get("ultra_transport_company")
