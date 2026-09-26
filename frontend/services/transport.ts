@@ -376,6 +376,7 @@ export function createStandaloneTransportOrder(payload: {
   delivery_note?: string
   external_delivery_note?: string
   note?: string
+  custom_address_zone?: string
   transport_customer?: string
   transport_customer_name?: string
   transport_phone?: string

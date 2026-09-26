@@ -62,6 +62,10 @@ function newQuickZoneDraft(partial?: Partial<QuickZoneDraft>): QuickZoneDraft {
   }
 }
 
+function stripHtml(value?: string) {
+  return (value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
 function statusBadge(status?: string) {
   if (status === 'Completed') return 'success'
   if (status === 'Pending Invoicing') return 'warning'
@@ -126,6 +130,8 @@ export default function TransportOrdersPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [createCustomer, setCreateCustomer] = useState('')
   const [createRate, setCreateRate] = useState('')
+  const [createAddressZone, setCreateAddressZone] = useState('')
+  const [createZoneQuery, setCreateZoneQuery] = useState('')
   const [createQty, setCreateQty] = useState('1')
   const [createDeliveryNoteMode, setCreateDeliveryNoteMode] = useState<'system' | 'reference'>('system')
   const [createDeliveryNoteSearch, setCreateDeliveryNoteSearch] = useState('')
@@ -182,6 +188,31 @@ export default function TransportOrdersPage() {
           .join(' · '),
       }))
   }, [zoneCatalog, quickZoneQuery])
+
+  const createZoneOptions = useMemo(() => {
+    const q = createZoneQuery.trim().toLowerCase()
+    return zoneCatalog
+      .filter((z) => {
+        if (!q) return true
+        return (
+          z.name.toLowerCase().includes(q) ||
+          (z.zone_city || '').toLowerCase().includes(q) ||
+          (z.zone_name || '').toLowerCase().includes(q)
+        )
+      })
+      .map((z) => ({
+        value: z.name,
+        label: z.zone_name || z.name,
+        description: [z.zone_city, z.transport_charges != null ? String(z.transport_charges) : '']
+          .filter(Boolean)
+          .join(' · '),
+      }))
+  }, [zoneCatalog, createZoneQuery])
+
+  const createSelectedZone = useMemo(
+    () => zoneCatalog.find((z) => z.name === createAddressZone.trim()) || null,
+    [zoneCatalog, createAddressZone]
+  )
 
   const rows = useMemo(() => {
     return (data || []).filter((order) => {
@@ -261,10 +292,13 @@ export default function TransportOrdersPage() {
     setCreateFinalEmail('')
     setCreateFinalAddress('')
     setCreateNote('')
+    setCreateAddressZone('')
+    setCreateZoneQuery('')
     setCreateQty('1')
     setDeliveryNoteSuggestions([])
     setTransportCustomerSuggestions([])
     setCreateOpen(true)
+    void loadZoneCatalog('')
     try {
       const [defaults, customers, deliveryNotes, transportCustomers] = await Promise.all([
         getTransportOrderDefaults(),
@@ -281,6 +315,14 @@ export default function TransportOrdersPage() {
       setCustomerSuggestions([])
       setDeliveryNoteSuggestions([])
       setTransportCustomerSuggestions([])
+    }
+  }
+
+  function applyCreateZoneSelection(zoneName: string) {
+    setCreateAddressZone(zoneName)
+    const match = zoneCatalog.find((z) => z.name === zoneName)
+    if (match && Number(match.transport_charges || 0) > 0) {
+      setCreateRate(String(match.transport_charges))
     }
   }
 
@@ -533,6 +575,8 @@ export default function TransportOrdersPage() {
             ? createExternalDeliveryNote.trim() || undefined
             : undefined,
         note: createNote.trim() || undefined,
+        custom_address_zone:
+          zoneCatalog.find((z) => z.name === createAddressZone.trim())?.name || undefined,
         transport_customer: createTransportCustomer.trim() || undefined,
         transport_customer_name: createFinalCustomerName.trim() || undefined,
         transport_phone: createFinalPhone.trim() || undefined,
@@ -1614,6 +1658,7 @@ export default function TransportOrdersPage() {
           if (creating) return
           setCreateOpen(false)
         }}
+        className="max-w-2xl"
       >
         <form className="space-y-4" onSubmit={handleCreateStandalone}>
           <p className="text-sm text-muted-foreground">
@@ -1621,52 +1666,47 @@ export default function TransportOrdersPage() {
             <strong>{createDefaults?.transport_company || 'your transport company'}</strong>.
             Link a delivery note optionally; leave it blank for billing-only orders.
           </p>
-          <div>
-            <Label>Billing customer *</Label>
-            <SearchCombobox
-              value={createCustomer}
-              onChange={(value) => {
-                setCreateCustomer(value)
-                void refreshCustomerSuggestions(value)
-              }}
-              onSearch={(value) => void refreshCustomerSuggestions(value)}
-              onSelect={(option) => setCreateCustomer(option.value)}
-              options={customerSuggestions.map((row) => ({
-                value: row.name,
-                label: row.customer_name || row.name,
-                description: row.customer_name && row.customer_name !== row.name ? row.name : undefined,
-              }))}
-              placeholder="Search billing customer…"
-              required
-              disabled={creating}
-              emptyText="No customers found"
-              endAction={
-                <button
-                  type="button"
-                  title="New billing customer"
-                  aria-label="New billing customer"
-                  disabled={creating}
-                  className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-45"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => {
-                    setQuickBillingName(createCustomer.trim())
-                    setQuickBillingOpen(true)
-                  }}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </button>
-              }
-            />
-          </div>
-          <div className="rounded-xl border border-border p-3 space-y-3">
+          <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <p className="text-sm font-medium">Final transport customer</p>
-              <p className="mb-3 text-xs text-muted-foreground">
-                The end customer receiving the goods. Pick an existing Transport Customer or create one.
-              </p>
+              <Label>Billing customer *</Label>
+              <SearchCombobox
+                value={createCustomer}
+                onChange={(value) => {
+                  setCreateCustomer(value)
+                  void refreshCustomerSuggestions(value)
+                }}
+                onSearch={(value) => void refreshCustomerSuggestions(value)}
+                onSelect={(option) => setCreateCustomer(option.value)}
+                options={customerSuggestions.map((row) => ({
+                  value: row.name,
+                  label: row.customer_name || row.name,
+                  description:
+                    row.customer_name && row.customer_name !== row.name ? row.name : undefined,
+                }))}
+                placeholder="Search billing customer…"
+                required
+                disabled={creating}
+                emptyText="No customers found"
+                endAction={
+                  <button
+                    type="button"
+                    title="New billing customer"
+                    aria-label="New billing customer"
+                    disabled={creating}
+                    className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-45"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      setQuickBillingName(createCustomer.trim())
+                      setQuickBillingOpen(true)
+                    }}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                }
+              />
             </div>
             <div>
-              <Label>Customer name</Label>
+              <Label>Transport customer</Label>
               <SearchCombobox
                 value={createFinalCustomerName}
                 onChange={(value) => {
@@ -1702,6 +1742,14 @@ export default function TransportOrdersPage() {
                 <p className="mt-1 text-xs text-muted-foreground">Linked: {createTransportCustomer}</p>
               ) : null}
             </div>
+          </div>
+          <div className="rounded-xl border border-border p-3 space-y-3">
+            <div>
+              <p className="text-sm font-medium">Final transport customer details</p>
+              <p className="mb-3 text-xs text-muted-foreground">
+                The end customer receiving the goods. Details below are stored on this transport order.
+              </p>
+            </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <Label>Phone</Label>
@@ -1733,6 +1781,56 @@ export default function TransportOrdersPage() {
                 disabled={creating}
               />
             </div>
+          </div>
+          <div className="rounded-xl border border-border p-3 space-y-3">
+            <div>
+              <p className="text-sm font-medium">Zone</p>
+              <p className="text-xs text-muted-foreground">
+                Pick an address zone for this standalone order. The zone's transport charge fills the rate
+                below when it has one.
+              </p>
+            </div>
+            <div>
+              <Label>Address Zone</Label>
+              <SearchCombobox
+                value={createAddressZone}
+                onChange={(value) => {
+                  setCreateAddressZone(value)
+                  setCreateZoneQuery(value)
+                  void loadZoneCatalog(value)
+                }}
+                onSearch={(value) => {
+                  setCreateZoneQuery(value)
+                  void loadZoneCatalog(value)
+                }}
+                onSelect={(option) => applyCreateZoneSelection(option.value)}
+                options={createZoneOptions}
+                placeholder="Search zone…"
+                disabled={creating}
+                emptyText="No zones — create under Master → Zones"
+              />
+            </div>
+            {createSelectedZone ? (
+              <div className="grid gap-1 rounded-lg bg-muted/50 px-3 py-2 text-xs sm:grid-cols-2">
+                <div className="flex justify-between gap-2 sm:justify-start">
+                  <span className="text-muted-foreground">City</span>
+                  <span className="font-medium">{createSelectedZone.zone_city || '—'}</span>
+                </div>
+                <div className="flex justify-between gap-2 sm:justify-start">
+                  <span className="text-muted-foreground">Zone charge</span>
+                  <span className="font-medium">
+                    {Number(createSelectedZone.transport_charges || 0) > 0
+                      ? formatMoney(Number(createSelectedZone.transport_charges), createDefaults?.currency)
+                      : 'Not set — uses Transport Settings'}
+                  </span>
+                </div>
+                {stripHtml(createSelectedZone.more_information) ? (
+                  <p className="text-muted-foreground sm:col-span-2">
+                    {stripHtml(createSelectedZone.more_information)}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
