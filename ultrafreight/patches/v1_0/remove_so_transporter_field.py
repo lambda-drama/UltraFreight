@@ -1,6 +1,5 @@
 import frappe
 
-
 REMOVED_SO_FIELDS = (
 	"Sales Order-transporter",
 	"Sales Order-transporter_type",

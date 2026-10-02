@@ -30,16 +30,14 @@ def notify_transport_company_pending_dispatch_inline(
 	message = build_hardcoded_email(
 		_("Transport Order Needs Your Action"),
 		[
-			_(
-				"A transport order has been created and needs your action."
-			),
+			_("A transport order has been created and needs your action."),
 			_(
 				"Draft Sales Order <strong>{0}</strong> was created for Delivery Note <strong>{1}</strong>."
 			).format(so_text, doc.name)
 			if so_text
-			else _("A draft transport Sales Order was created for Delivery Note <strong>{0}</strong>.").format(
-				doc.name
-			),
+			else _(
+				"A draft transport Sales Order was created for Delivery Note <strong>{0}</strong>."
+			).format(doc.name),
 			_(
 				"Please review the quantity or amount if needed, then submit the transport order "
 				"to initiate dispatch."
@@ -83,9 +81,9 @@ def notify_on_the_way(delivery_note_name: str):
 	driver_name = driver.full_name if driver else ""
 	vehicle_no = doc.get("vehicle_no") or (driver.get("vehicle_number") if driver else "")
 
-	sms_message = _(
-		"Your goods are on the way! OTP: {0}. Driver: {1}, Vehicle: {2}"
-	).format(doc.otp or "—", driver_name, vehicle_no)
+	sms_message = _("Your goods are on the way! OTP: {0}. Driver: {1}, Vehicle: {2}").format(
+		doc.otp or "—", driver_name, vehicle_no
+	)
 	send_transport_sms(
 		[doc.get("transport_phone")],
 		sms_message,
@@ -139,7 +137,9 @@ def notify_delivery_confirmed(delivery_note_name: str, sales_order_name: str | N
 			continue
 		message = {
 			"Driver": _("Delivery confirmed! Thank you for your service."),
-			"Goods Customer": _("Delivery confirmed for your order: {0}").format(sales_order_name or doc.name),
+			"Goods Customer": _("Delivery confirmed for your order: {0}").format(
+				sales_order_name or doc.name
+			),
 			"Transport Customer": _("Goods delivered successfully! Thank you for your business."),
 		}[party]
 		send_transport_sms(

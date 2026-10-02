@@ -1,8 +1,7 @@
 import frappe
+from erpnext.stock.doctype.delivery_note.delivery_note import DeliveryNote
 from frappe import _
 from frappe.utils import get_url
-
-from erpnext.stock.doctype.delivery_note.delivery_note import DeliveryNote
 
 from ultrafreight.ultra_freight.api.transport_dispatch import (
 	create_transport_sales_order,

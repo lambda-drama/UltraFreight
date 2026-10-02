@@ -1,1 +1,1 @@
-self.__NEXT_FONT_MANIFEST='{"pages":{},"app":{"/Users/josephmaniamania/bench-v16/frappe-bench/apps/ultrafreight/frontend/app/layout":["static/media/e4af272ccee01ff0-s.p.woff2","static/media/97ac91773d3121b2-s.p.woff2"]},"appUsingSizeAdjust":true,"pagesUsingSizeAdjust":false}';
+self.__NEXT_FONT_MANIFEST='{"pages":{},"app":{"/Users/josephmaniamania/bench-v16/frappe-bench/apps/ultrafreight/frontend/app/layout":["static/media/597b6a5d799c44de-s.p.woff2","static/media/e4af272ccee01ff0-s.p.woff2"]},"appUsingSizeAdjust":true,"pagesUsingSizeAdjust":false}';

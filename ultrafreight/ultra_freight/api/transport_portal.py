@@ -2,12 +2,12 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt, now_datetime
 
-from ultrafreight.ultra_freight.utils.transport_settings import get_transport_settings
-
-
-from ultrafreight.ultra_freight.utils.delivery_status import normalize_delivery_status as _normalize_delivery_status
-from ultrafreight.ultra_freight.utils.sms_log import get_delivery_sms_logs
+from ultrafreight.ultra_freight.utils.delivery_status import (
+	normalize_delivery_status as _normalize_delivery_status,
+)
 from ultrafreight.ultra_freight.utils.email_log import get_delivery_email_logs
+from ultrafreight.ultra_freight.utils.sms_log import get_delivery_sms_logs
+from ultrafreight.ultra_freight.utils.transport_settings import get_transport_settings
 
 
 def _require_login():
@@ -40,11 +40,14 @@ def _transport_sales_order_filters(extra: dict | None = None) -> dict:
 
 
 def _get_linked_delivery_notes() -> list[str]:
-	return frappe.get_all(
-		"Sales Order",
-		filters=_transport_sales_order_filters(),
-		pluck="custom_delivery_note_to_be_transported",
-	) or []
+	return (
+		frappe.get_all(
+			"Sales Order",
+			filters=_transport_sales_order_filters(),
+			pluck="custom_delivery_note_to_be_transported",
+		)
+		or []
+	)
 
 
 def _dispatch_filters(extra: dict | None = None) -> dict:
@@ -114,7 +117,9 @@ def get_dashboard_stats():
 		filters={**dispatch_filters, "transport_sales_invoice": ("is", "set")},
 		fields=["name", "transport_sales_invoice", "transport_customer_name", "transport_customer"],
 	)
-	invoice_names = list({row.transport_sales_invoice for row in dn_invoice_rows if row.transport_sales_invoice})
+	invoice_names = list(
+		{row.transport_sales_invoice for row in dn_invoice_rows if row.transport_sales_invoice}
+	)
 
 	transport_invoices = 0
 	total_invoiced_amount = 0
@@ -169,9 +174,7 @@ def get_dashboard_stats():
 	monthly_invoices = _get_monthly_invoice_trend(invoice_records)
 
 	return {
-		"open_dispatches": frappe.db.count(
-			"Delivery Note", {**dispatch_filters, "delivery_status": "Open"}
-		),
+		"open_dispatches": frappe.db.count("Delivery Note", {**dispatch_filters, "delivery_status": "Open"}),
 		"needs_action": len(
 			frappe.get_all(
 				"Delivery Note",
@@ -184,9 +187,7 @@ def get_dashboard_stats():
 			"Delivery Note",
 			{**dispatch_filters, "delivery_status": ("in", ["Open", "", None])},
 		),
-		"in_transit": frappe.db.count(
-			"Delivery Note", {**dispatch_filters, "delivery_status": "In Transit"}
-		),
+		"in_transit": frappe.db.count("Delivery Note", {**dispatch_filters, "delivery_status": "In Transit"}),
 		"pending_invoicing": frappe.db.count(
 			"Delivery Note", {**dispatch_filters, "delivery_status": "Pending Invoicing"}
 		),
@@ -209,7 +210,10 @@ def get_dashboard_stats():
 		"transport_invoices": transport_invoices,
 		"drivers": frappe.db.count(
 			"Driver",
-			{"status": "Active", **({"transport_company": _transport_company()} if _transport_company() else {})},
+			{
+				"status": "Active",
+				**({"transport_company": _transport_company()} if _transport_company() else {}),
+			},
 		),
 		"currency": currency,
 		"total_invoiced_amount": total_invoiced_amount,
@@ -222,7 +226,7 @@ def get_dashboard_stats():
 
 
 def _get_monthly_invoice_trend(invoice_records: list, months: int = 6) -> list[dict]:
-	from frappe.utils import getdate, add_months
+	from frappe.utils import add_months, getdate
 
 	if not invoice_records:
 		return []
@@ -924,21 +928,23 @@ def get_transport_orders(docstatus: str | None = None):
 		order["driver"] = dn_values.driver if dn_values else None
 		order["vehicle_no"] = dn_values.vehicle_no if dn_values else None
 		order["transport_sales_invoice"] = dn_values.transport_sales_invoice if dn_values else None
-		order["transport_customer"] = dn_values.transport_customer if dn_values else order.get("transport_customer")
+		order["transport_customer"] = (
+			dn_values.transport_customer if dn_values else order.get("transport_customer")
+		)
 		order["transport_customer_name"] = (
 			dn_values.transport_customer_name if dn_values else order.get("transport_customer_name")
 		)
 		order["transport_phone"] = dn_values.transport_phone if dn_values else order.get("transport_phone")
 		order["transport_email"] = dn_values.transport_email if dn_values else order.get("transport_email")
-		order["transport_address"] = dn_values.transport_address if dn_values else order.get("transport_address")
+		order["transport_address"] = (
+			dn_values.transport_address if dn_values else order.get("transport_address")
+		)
 		order["zones"] = get_zones_for_transport_customer(order.get("transport_customer"))
 		order["send_otp"] = get_transport_customer_send_otp(order.get("transport_customer"))
 		order["otp"] = dn_values.otp if dn_values else None
 		order["otp_expires_at"] = dn_values.otp_expires_at if dn_values else None
 		order["otp_expired"] = bool(
-			dn_values
-			and dn_values.otp_expires_at
-			and now_datetime() > dn_values.otp_expires_at
+			dn_values and dn_values.otp_expires_at and now_datetime() > dn_values.otp_expires_at
 		)
 		order["otp_missing"] = bool(dn and not (dn_values and dn_values.otp))
 
@@ -1013,7 +1019,9 @@ def update_transport_order(
 
 	dn_name = doc.get("custom_delivery_note_to_be_transported")
 	transport_customer_link = (
-		frappe.db.get_value("Delivery Note", dn_name, "transport_customer") if dn_name else doc.get("transport_customer")
+		frappe.db.get_value("Delivery Note", dn_name, "transport_customer")
+		if dn_name
+		else doc.get("transport_customer")
 	)
 
 	if custom_address_zone is not None and frappe.get_meta("Sales Order").has_field("custom_address_zone"):
@@ -1057,7 +1065,9 @@ def update_transport_order(
 
 	# Keep Main Company Invoice in sync from the linked Delivery Note's goods invoice
 	if dn_name:
-		from ultrafreight.ultra_freight.api.transport_dispatch import get_main_company_invoice_for_delivery_note
+		from ultrafreight.ultra_freight.api.transport_dispatch import (
+			get_main_company_invoice_for_delivery_note,
+		)
 
 		main_invoice = get_main_company_invoice_for_delivery_note(dn_name)
 		if main_invoice:
@@ -1101,9 +1111,12 @@ def update_transport_order(
 			dn_meta = frappe.get_meta("Delivery Note")
 			dn_updates = {k: v for k, v in resolved.items() if v is not None and dn_meta.has_field(k)}
 			if dn_updates:
-				if _normalize_delivery_status(
-					frappe.db.get_value("Delivery Note", dn_name, "delivery_status")
-				) != "Open":
+				if (
+					_normalize_delivery_status(
+						frappe.db.get_value("Delivery Note", dn_name, "delivery_status")
+					)
+					!= "Open"
+				):
 					frappe.throw(_("Final customer can only be changed while delivery status is Open"))
 				frappe.db.set_value("Delivery Note", dn_name, dn_updates, update_modified=True)
 
@@ -1135,11 +1148,12 @@ def submit_transport_order(name: str, send_otp: int | None = None):
 	transport_customer = (
 		frappe.db.get_value("Delivery Note", dn_name, "transport_customer") if dn_name else None
 	)
+	from frappe.utils import cint
+
 	from ultrafreight.ultra_freight.api.transport_dispatch import (
 		get_transport_customer_send_otp,
 		get_zones_for_transport_customer,
 	)
-	from frappe.utils import cint
 
 	zones = get_zones_for_transport_customer(transport_customer)
 	if zones and frappe.get_meta("Sales Order").has_field("custom_address_zone"):
@@ -1162,11 +1176,15 @@ MANAGER_DELIVERY_ROLES = ("Sales Manager", "System Manager", "Administrator", "M
 def _require_manager_delivery_role():
 	roles = set(frappe.get_roles(frappe.session.user))
 	if not roles.intersection(MANAGER_DELIVERY_ROLES):
-		frappe.throw(_("Only Sales Manager or System Manager can mark delivery as delivered"), frappe.PermissionError)
+		frappe.throw(
+			_("Only Sales Manager or System Manager can mark delivery as delivered"), frappe.PermissionError
+		)
 
 
 @frappe.whitelist()
-def mark_transport_order_delivered(name: str, completion_type: str = "Full", partial_reason: str | None = None):
+def mark_transport_order_delivered(
+	name: str, completion_type: str = "Full", partial_reason: str | None = None
+):
 	"""Mark In Transit delivery as Pending Invoicing (manager confirmation, no OTP)."""
 	_require_login()
 	_require_manager_delivery_role()
@@ -2177,7 +2195,9 @@ def get_portal_transport_settings():
 	_require_settings_admin()
 	doc = frappe.get_single("Transport Settings")
 	data = {field: doc.get(field) for field in SETTINGS_EDITABLE_FIELDS}
-	data["sms_api_key_set"] = bool(doc.get_password("sms_api_key", raise_exception=False) if doc.meta.has_field("sms_api_key") else False)
+	data["sms_api_key_set"] = bool(
+		doc.get_password("sms_api_key", raise_exception=False) if doc.meta.has_field("sms_api_key") else False
+	)
 	# Never return the raw password to the client
 	data["sms_api_key"] = ""
 	return data
@@ -2610,9 +2630,7 @@ def delete_master_address_zone(name: str):
 	in_use = frappe.db.count("Address Zone Detail", {"zone": name})
 	if in_use:
 		frappe.throw(
-			_("Cannot delete {0} — it is assigned on {1} transport customer zone row(s)").format(
-				name, in_use
-			)
+			_("Cannot delete {0} — it is assigned on {1} transport customer zone row(s)").format(name, in_use)
 		)
 
 	frappe.delete_doc("Address Zone", name, ignore_permissions=True)

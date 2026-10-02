@@ -9,7 +9,7 @@ PIN_MAX_ATTEMPTS = 50
 
 def generate_driver_pin() -> str:
 	"""Generate a unique 4-digit PIN for the driver portal."""
-	for _ in range(PIN_MAX_ATTEMPTS):
+	for _attempt in range(PIN_MAX_ATTEMPTS):
 		pin = f"{secrets.randbelow(10**PIN_LENGTH):0{PIN_LENGTH}d}"
 		if not frappe.db.exists("Driver", {"unique_key": pin}):
 			return pin

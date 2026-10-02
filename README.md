@@ -153,17 +153,29 @@ pre-commit install
 
 Pre-commit is configured to use the following tools for checking and formatting your code:
 
-- ruff
+- ruff — import sorter, linter and formatter (config in `pyproject.toml`)
 - eslint
 - prettier
 - pyupgrade
 
+Run every hook against the whole repo — the same checks CI runs:
+
+```bash
+pre-commit run --all-files
+```
+
+The JS hooks (`prettier`, `eslint`) check hand-written `.js`/`.mjs`/`.scss` files and skip the committed Next.js build output under `frontend/.next`, `frontend/out` and `ultrafreight/public/frontend`.
+
 ## CI
 
-This app can use GitHub Actions for CI. The following workflows are configured:
+GitHub Actions workflows live in `.github/workflows/`:
 
-- CI: Installs this app and runs unit tests on every push to `develop` branch.
-- Linters: Runs [Frappe Semgrep Rules](https://github.com/frappe/semgrep-rules) and [pip-audit](https://pypi.org/project/pip-audit/) on every pull request.
+| Workflow | Jobs | Triggers |
+| --- | --- | --- |
+| `ci.yml` | **Server** — spins up MariaDB + Redis, installs the app (Frappe `version-15`, Python 3.10, Node 18) and runs `bench --site test_site run-tests --app ultrafreight`. **Linter** — runs `ruff check` (reported as inline PR annotations) and `ruff format --check` using `[tool.ruff]` from `pyproject.toml` | push to `version-15`, pull requests, manual dispatch |
+| `linter.yml` | **Frappe Linter** — runs all `pre-commit` hooks, then [Frappe Semgrep Rules](https://github.com/frappe/semgrep-rules). **Vulnerable Dependency Check** — [pip-audit](https://pypi.org/project/pip-audit/) | pull requests, manual dispatch |
+
+The ruff version is pinned in `ci.yml` to match the `ruff-pre-commit` revision in `.pre-commit-config.yaml` — bump both together.
 
 ## License
 

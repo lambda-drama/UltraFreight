@@ -1,8 +1,7 @@
 import frappe
+from erpnext.selling.doctype.sales_order.sales_order import SalesOrder
 from frappe import _
 from frappe.utils import format_datetime
-
-from erpnext.selling.doctype.sales_order.sales_order import SalesOrder
 
 from ultrafreight.ultra_freight.api.transport_dispatch import (
 	initiate_transport_on_sales_order_submit,
@@ -24,6 +23,7 @@ class UltraFreightSalesOrder(SalesOrder):
 	def before_save(self):
 		self.clear_transport_fields_from_goods_orders()
 		self.handle_transport_customer()
+		self.sync_customer_zones()
 
 	def clear_transport_fields_from_goods_orders(self):
 		settings = get_transport_settings()
@@ -89,6 +89,38 @@ class UltraFreightSalesOrder(SalesOrder):
 				delivery_address=self.get("transport_address"),
 			)
 			sync_transport_customer_fields(self)
+
+	def sync_customer_zones(self):
+		"""Copy Transport Customer zones onto Sales Order when that table is still empty."""
+		if not self.meta.has_field("custom_customer_zone"):
+			return
+		if self.has_value_changed("transport_customer") and not self.get("transport_customer"):
+			self.set("custom_customer_zone", [])
+			return
+		# The desk form fills the table on select. Only backfill when it is still empty
+		# so a charge edited on the order is not overwritten on save.
+		if self.get("custom_customer_zone") or not self.get("transport_customer"):
+			return
+
+		rows = frappe.get_all(
+			"Address Zone Detail",
+			filters={"parent": self.transport_customer, "parenttype": "Transport Customer"},
+			fields=["zone", "city", "more_information", "transport_charges", "default", "idx"],
+			order_by="idx asc",
+		)
+		for row in rows:
+			if not row.zone:
+				continue
+			self.append(
+				"custom_customer_zone",
+				{
+					"zone": row.zone,
+					"city": row.city,
+					"more_information": row.more_information,
+					"transport_charges": row.transport_charges,
+					"default": row.default,
+				},
+			)
 
 	def show_transport_initiated_message(self):
 		dn_name = self.custom_delivery_note_to_be_transported
