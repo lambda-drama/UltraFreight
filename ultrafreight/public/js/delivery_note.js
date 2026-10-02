@@ -58,7 +58,12 @@ function add_dispatch_buttons(frm) {
 }
 
 function render_sms_logs(frm) {
-	if (!frm.doc.require_direct_delivery || !frm.doc.name || frm.doc.__islocal || frm.doc.docstatus !== 1) {
+	if (
+		!frm.doc.require_direct_delivery ||
+		!frm.doc.name ||
+		frm.doc.__islocal ||
+		frm.doc.docstatus !== 1
+	) {
 		return;
 	}
 
@@ -82,7 +87,9 @@ function render_sms_logs(frm) {
 						<td>${frappe.utils.escape_html(log.party || "")}</td>
 						<td>${frappe.utils.escape_html(log.recipient_label || log.recipient || "")}</td>
 						<td>${frappe.utils.escape_html(log.recipient || "")}</td>
-						<td><span class="indicator ${sms_status_color(log.status)}">${frappe.utils.escape_html(log.status || "")}</span></td>
+						<td><span class="indicator ${sms_status_color(log.status)}">${frappe.utils.escape_html(
+						log.status || ""
+					)}</span></td>
 						<td style="max-width:280px;white-space:normal;">${frappe.utils.escape_html(log.message || "")}</td>
 					</tr>`
 				)
@@ -112,7 +119,12 @@ function render_sms_logs(frm) {
 }
 
 function render_email_logs(frm) {
-	if (!frm.doc.require_direct_delivery || !frm.doc.name || frm.doc.__islocal || frm.doc.docstatus !== 1) {
+	if (
+		!frm.doc.require_direct_delivery ||
+		!frm.doc.name ||
+		frm.doc.__islocal ||
+		frm.doc.docstatus !== 1
+	) {
 		return;
 	}
 
@@ -136,7 +148,9 @@ function render_email_logs(frm) {
 						<td>${frappe.utils.escape_html(log.party || "")}</td>
 						<td>${frappe.utils.escape_html(log.recipient_label || log.recipient || "")}</td>
 						<td>${frappe.utils.escape_html(log.recipient || "")}</td>
-						<td><span class="indicator ${sms_status_color(log.status)}">${frappe.utils.escape_html(log.status || "")}</span></td>
+						<td><span class="indicator ${sms_status_color(log.status)}">${frappe.utils.escape_html(
+						log.status || ""
+					)}</span></td>
 						<td style="max-width:280px;white-space:normal;">${frappe.utils.escape_html(log.subject || "")}</td>
 					</tr>`
 				)

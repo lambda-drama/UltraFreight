@@ -7,16 +7,42 @@ frappe.ui.form.on("Sales Order", {
 		toggle_transport_fields(frm);
 	},
 	transport_customer(frm) {
-		if (frm.doc.transport_customer) {
-			frappe.db.get_doc("Transport Customer", frm.doc.transport_customer).then((tc) => {
-				frm.set_value("transport_customer_name", tc.customer_name);
-				frm.set_value("transport_phone", tc.phone_number);
-				frm.set_value("transport_email", tc.email);
-				frm.set_value("transport_address", tc.delivery_address);
-			});
+		if (!frm.doc.transport_customer) {
+			set_customer_zones(frm, []);
+			return;
 		}
+		const selected = frm.doc.transport_customer;
+		frappe.db.get_doc("Transport Customer", selected).then((tc) => {
+			if (frm.doc.transport_customer !== selected) {
+				return;
+			}
+			frm.set_value("transport_customer_name", tc.customer_name);
+			frm.set_value("transport_phone", tc.phone_number);
+			frm.set_value("transport_email", tc.email);
+			frm.set_value("transport_address", tc.delivery_address);
+			set_customer_zones(frm, tc.zones || []);
+		});
 	},
 });
+
+function set_customer_zones(frm, zones) {
+	if (!frm.get_field("custom_customer_zone")) {
+		return;
+	}
+	frm.clear_table("custom_customer_zone");
+	(zones || []).forEach((row) => {
+		if (!row.zone) {
+			return;
+		}
+		const child = frm.add_child("custom_customer_zone");
+		child.zone = row.zone;
+		child.city = row.city || "";
+		child.more_information = row.more_information || "";
+		child.transport_charges = row.transport_charges || 0;
+		child.default = row.default ? 1 : 0;
+	});
+	frm.refresh_field("custom_customer_zone");
+}
 
 function toggle_transport_fields(frm) {
 	const show = frm.doc.require_direct_delivery;
@@ -32,8 +58,12 @@ function toggle_transport_fields(frm) {
 		"custom_is_transport_order",
 		"custom_delivery_note_to_be_transported",
 		"custom_address_zone",
+		"custom_section_break_pfwwy",
+		"custom_customer_zone",
 	];
-	fields.forEach((field) => frm.toggle_display(field, show || frm.doc.custom_is_transport_order));
+	fields.forEach((field) =>
+		frm.toggle_display(field, show || frm.doc.custom_is_transport_order)
+	);
 	frm.toggle_reqd("transport_customer_name", show);
 	frm.toggle_reqd("transport_phone", show);
 	// frm.toggle_reqd("driver", show);
@@ -70,13 +100,13 @@ function add_regenerate_otp_button(frm) {
 
 			frm.add_custom_button(__("Regenerate OTP"), () => {
 				frappe.confirm(
-					__("Generate a new OTP for Delivery Note {0}? Recipients will be notified again.", [
-						dn,
-					]),
+					__(
+						"Generate a new OTP for Delivery Note {0}? Recipients will be notified again.",
+						[dn]
+					),
 					() => {
 						frappe.call({
-							method:
-								"ultrafreight.ultra_freight.api.transport_portal.regenerate_transport_otp",
+							method: "ultrafreight.ultra_freight.api.transport_portal.regenerate_transport_otp",
 							args: { name: frm.doc.name },
 							freeze: true,
 							freeze_message: __("Regenerating OTP…"),
@@ -91,7 +121,9 @@ function add_regenerate_otp_button(frm) {
 											result.delivery_note || dn,
 											result.otp || "",
 											result.otp_expires_at
-												? frappe.datetime.str_to_user(result.otp_expires_at)
+												? frappe.datetime.str_to_user(
+														result.otp_expires_at
+												  )
 												: "",
 										]
 									),

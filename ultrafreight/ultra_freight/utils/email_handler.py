@@ -261,14 +261,12 @@ def _clear_email_error_messages() -> None:
 
 def format_delivery_note_email(delivery_note, extra_message: str = "") -> str:
 	link = get_url_to_form("Delivery Note", delivery_note.name)
-	items = "<br>".join(
-		f"• {item.item_name or item.item_code} x {item.qty}" for item in delivery_note.items
-	)
+	items = "<br>".join(f"• {item.item_name or item.item_code} x {item.qty}" for item in delivery_note.items)
 	return f"""
 	<p>{extra_message}</p>
 	<p><strong>Delivery Note:</strong> {delivery_note.name}</p>
-	<p><strong>Transport Customer:</strong> {delivery_note.get('transport_customer_name') or ''}</p>
-	<p><strong>Address:</strong> {delivery_note.get('transport_address') or ''}</p>
+	<p><strong>Transport Customer:</strong> {delivery_note.get("transport_customer_name") or ""}</p>
+	<p><strong>Address:</strong> {delivery_note.get("transport_address") or ""}</p>
 	<p><strong>Items:</strong><br>{items}</p>
 	<p><a href="{link}">View Delivery Note</a></p>
 	"""

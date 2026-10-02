@@ -1,9 +1,8 @@
 import frappe
-from frappe import _
-from frappe.utils import add_to_date, cint, flt, format_datetime, now_datetime
-
 from erpnext.controllers.accounts_controller import get_taxes_and_charges
 from erpnext.selling.doctype.sales_order.sales_order import make_sales_invoice
+from frappe import _
+from frappe.utils import add_to_date, cint, flt, format_datetime, now_datetime
 
 from ultrafreight.ultra_freight.api.notifications import (
 	create_confirmation_log,
@@ -94,9 +93,7 @@ def create_transport_sales_order(delivery_note_name: str) -> str:
 	if existing_transport_order:
 		if _is_valid_transport_sales_order(existing_transport_order, original_goods_order, doc.name):
 			return existing_transport_order
-		frappe.db.set_value(
-			"Delivery Note", doc.name, "transport_sales_order", None, update_modified=False
-		)
+		frappe.db.set_value("Delivery Note", doc.name, "transport_sales_order", None, update_modified=False)
 
 	company = settings.get("ultra_transport_company")
 	transport_item = settings.get("default_transport_item")
@@ -527,7 +524,9 @@ def create_transport_sales_invoice_from_order(transport_sales_order_name: str) -
 	_validate_transport_order_items(so, transport_item)
 
 	existing_invoice = (
-		frappe.db.get_value("Delivery Note", goods_dn_name, "transport_sales_invoice") if goods_dn_name else None
+		frappe.db.get_value("Delivery Note", goods_dn_name, "transport_sales_invoice")
+		if goods_dn_name
+		else None
 	)
 	if existing_invoice:
 		return existing_invoice
@@ -547,7 +546,9 @@ def create_transport_sales_invoice_from_order(transport_sales_order_name: str) -
 	return si.name
 
 
-def _get_or_create_transport_delivery_note(transport_sales_order_name: str, settings: dict | None = None) -> str:
+def _get_or_create_transport_delivery_note(
+	transport_sales_order_name: str, settings: dict | None = None
+) -> str:
 	"""Create (and submit) a Delivery Note against the transport Sales Order when SI requires DN."""
 	from erpnext.selling.doctype.sales_order.sales_order import make_delivery_note
 
@@ -654,9 +655,7 @@ def regenerate_otp_for_transport_order(sales_order_name: str, notify: bool = Tru
 
 	status = dn.get("delivery_status") or "Open"
 	if status in ("Pending Invoicing", "Completed"):
-		frappe.throw(
-			_("Cannot regenerate OTP when delivery status is {0}").format(status)
-		)
+		frappe.throw(_("Cannot regenerate OTP when delivery status is {0}").format(status))
 
 	existing_otp = dn.get("otp")
 	expires_at = dn.get("otp_expires_at")
@@ -742,13 +741,9 @@ def notify_transport_initiated(delivery_note_name: str, transport_sales_order_na
 
 	recipients = []
 	if company_phone := _get_company_phone(settings.get("ultra_transport_company")):
-		recipients.append(
-			(company_phone, "Transport Company", settings.get("ultra_transport_company"))
-		)
+		recipients.append((company_phone, "Transport Company", settings.get("ultra_transport_company")))
 	if doc.get("transport_phone"):
-		recipients.append(
-			(doc.transport_phone, "Transport Customer", doc.get("transport_customer_name"))
-		)
+		recipients.append((doc.transport_phone, "Transport Customer", doc.get("transport_customer_name")))
 	if customer_phone := frappe.db.get_value("Customer", doc.customer, "mobile_no"):
 		recipients.append((customer_phone, "Goods Customer", doc.customer))
 	if doc.driver:
@@ -815,9 +810,7 @@ def _send_transport_initiated_emails(
 			_("Your Goods Are On The Way"),
 			[
 				_("Dear {0},").format(goods_customer_name),
-				_(
-					"Your goods are on the way to your customer <strong>{0}</strong>."
-				).format(final_customer),
+				_("Your goods are on the way to your customer <strong>{0}</strong>.").format(final_customer),
 				_("Tracking number: <strong>{0}</strong>").format(track_no),
 				_("Delivery Note: <strong>{0}</strong>").format(track_no),
 				_("Your customer: <strong>{0}</strong>").format(final_customer),
@@ -837,11 +830,14 @@ def _send_transport_initiated_emails(
 	)
 
 	# 2) Final customer = Transport Customer — luggage / goods on the road
-	item_lines = "<br>".join(
-		f"• {frappe.utils.escape_html(row.item_name or row.item_code)} × {row.qty}"
-		for row in (doc.get("items") or [])
-		if row.get("item_code")
-	) or "—"
+	item_lines = (
+		"<br>".join(
+			f"• {frappe.utils.escape_html(row.item_name or row.item_code)} x {row.qty}"
+			for row in (doc.get("items") or [])
+			if row.get("item_code")
+		)
+		or "—"
+	)
 	_safe_send(
 		recipients=[doc.get("transport_email")] if doc.get("transport_email") else [],
 		subject=_("Your delivery is on the way — {0}").format(track_no),
@@ -877,9 +873,9 @@ def _send_transport_initiated_emails(
 		message=build_hardcoded_email(
 			_("Transport Delivery Initiated"),
 			[
-				_(
-					"Transport delivery for Delivery Note <strong>{0}</strong> has been initiated."
-				).format(track_no),
+				_("Transport delivery for Delivery Note <strong>{0}</strong> has been initiated.").format(
+					track_no
+				),
 				_("Transport Sales Order: <strong>{0}</strong>").format(transport_sales_order_name),
 				_("Goods customer: <strong>{0}</strong>").format(goods_customer_name),
 				_("Final customer: <strong>{0}</strong>").format(final_customer),
@@ -949,9 +945,7 @@ def _apply_transport_taxes(so, taxes_and_charges: str | None, company: str):
 			_("Sales Taxes Template {0} in Transport Settings was not found").format(taxes_and_charges)
 		)
 
-	template_company = frappe.db.get_value(
-		"Sales Taxes and Charges Template", taxes_and_charges, "company"
-	)
+	template_company = frappe.db.get_value("Sales Taxes and Charges Template", taxes_and_charges, "company")
 	if template_company and template_company != company:
 		frappe.throw(
 			_(
@@ -1023,8 +1017,7 @@ def _validate_transport_order_items(doc, transport_item: str):
 	if invalid_items:
 		frappe.throw(
 			_(
-				"Transport orders must only include the transport service item ({0}). "
-				"Found other items: {1}"
+				"Transport orders must only include the transport service item ({0}). Found other items: {1}"
 			).format(transport_item, ", ".join(invalid_items))
 		)
 

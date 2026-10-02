@@ -350,4 +350,3 @@ def get_custom_fields():
 		"Delivery Note": get_delivery_note_fields(),
 		"Driver": get_driver_fields(),
 	}
-

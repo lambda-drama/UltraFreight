@@ -53,8 +53,7 @@ fixtures = [
 					"Driver-unique_key",
 					"Driver-vehicle_number",
 					"Driver-transport_company",
-     
-     		# Sales Order Custom Fields
+					# Sales Order Custom Fields
 					"Sales Order-custom_last_customer_delivery_note_date",
 					"Sales Order-custom_last_customer_delivery_note",
 					"Sales Order-custom_last_customer_invoice_date",
@@ -66,12 +65,13 @@ fixtures = [
 					"Sales Order-custom_final_customer_feedback_document",
 					"Sales Order-is_transport_charge_order",
 					"Sales Order-custom_last_customer_invoice",
-
-					#address
+					# address
 					"Sales Order-custom_reason_for_reschedule",
 					"Sales Order-custom_reschedule_transport_order",
 					"Sales Order-custom_address_zone",
-					"Sales Order-custom_completed_without_otp"
+					"Sales Order-custom_completed_without_otp",
+					"Sales Order-custom_customer_zone",
+					"Sales Order-custom_section_break_pfwwy",
 				),
 			]
 		],
@@ -333,4 +333,3 @@ override_doctype_class = {
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
-
