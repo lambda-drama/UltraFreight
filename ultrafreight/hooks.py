@@ -70,9 +70,8 @@ fixtures = [
 					"Sales Order-custom_reschedule_transport_order",
 					"Sales Order-custom_address_zone",
 					"Sales Order-custom_completed_without_otp",
-     
 					"Sales Order-custom_customer_zone",
-					"Sales Order-custom_section_break_pfwwy"
+					"Sales Order-custom_section_break_pfwwy",
 				),
 			]
 		],
