@@ -95,7 +95,7 @@ website_route_rules = [
 	{"from_route": "/driver", "to_route": "driver"},
 	{"from_route": "/driver/<path:app_path>", "to_route": "driver"},
 	# Legacy SMS/email links → Driver Portal
-	{"from_route": "/driver-confirmation", "to_route": "driver-confirmation"},
+	{"from_route": "/driver-confirmation", "to_route": "driver_confirmation"},
 ]
 
 # Includes in <head>
