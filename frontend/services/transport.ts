@@ -74,6 +74,7 @@ export interface DeliveryItem {
 
 export interface TransportOrderRow {
   name: string
+  customer?: string
   customer_name?: string
   custom_delivery_note_to_be_transported?: string
   docstatus: number
@@ -496,6 +497,25 @@ export function createTransportInvoice(
   return apiRequest<{ sales_invoice: string; delivery_status: string }>(`${API}.create_transport_invoice`, {
     method: 'POST',
     body: JSON.stringify({ name, ...payload }),
+  })
+}
+
+export function createCombinedTransportInvoice(
+  names: string[],
+  payload?: {
+    custom_note?: string
+    custom_final_customer_feedback_document?: string
+  }
+) {
+  return apiRequest<{
+    sales_invoice: string
+    grand_total?: number
+    currency?: string
+    delivery_status: string
+    orders: { sales_order: string; delivery_note: string }[]
+  }>(`${API}.create_combined_transport_invoice`, {
+    method: 'POST',
+    body: JSON.stringify({ names, ...payload }),
   })
 }
 

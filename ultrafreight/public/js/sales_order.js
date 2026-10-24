@@ -2,6 +2,7 @@ frappe.ui.form.on("Sales Order", {
 	refresh(frm) {
 		toggle_transport_fields(frm);
 		add_regenerate_otp_button(frm);
+		add_zone_price_button(frm);
 	},
 	require_direct_delivery(frm) {
 		toggle_transport_fields(frm);
@@ -72,6 +73,24 @@ function toggle_transport_fields(frm) {
 		frm.set_df_property("require_direct_delivery", "read_only", 1);
 		frm.toggle_reqd("custom_address_zone", 0);
 	}
+}
+
+function add_zone_price_button(frm) {
+	frm.remove_custom_button(__("Update Zone Prices"));
+	if (!frm.doc.custom_is_transport_order) {
+		return;
+	}
+
+	const is_saved_draft = frm.doc.docstatus === 0 && !frm.doc.__islocal;
+	frm.add_custom_button(__("Update Zone Prices"), () => {
+		if (!(frappe.ultrafreight && frappe.ultrafreight.zone_prices)) {
+			frappe.msgprint(__("Zone price tool is not loaded. Please refresh the page."));
+			return;
+		}
+		frappe.ultrafreight.zone_prices.open({
+			selected: is_saved_draft ? [frm.doc.name] : [],
+		});
+	});
 }
 
 function add_regenerate_otp_button(frm) {

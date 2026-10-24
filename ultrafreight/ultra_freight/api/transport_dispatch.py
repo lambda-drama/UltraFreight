@@ -16,6 +16,7 @@ from ultrafreight.ultra_freight.utils.email_handler import build_hardcoded_email
 from ultrafreight.ultra_freight.utils.otp_generator import generate_otp, get_otp_expiry_minutes
 from ultrafreight.ultra_freight.utils.sms_handler import send_transport_sms
 from ultrafreight.ultra_freight.utils.transport_settings import get_driver_portal_url, get_transport_settings
+from ultrafreight.ultra_freight.utils.zone_field import get_zone_values
 
 
 def get_main_company_invoice_for_delivery_note(delivery_note_name: str) -> dict | None:
@@ -143,8 +144,8 @@ def create_transport_sales_order(delivery_note_name: str) -> str:
 		"custom_is_transport_order": 1,
 		"custom_delivery_note_to_be_transported": doc.name,
 	}
-	if address_zone and frappe.get_meta("Sales Order").has_field("custom_address_zone"):
-		so_values["custom_address_zone"] = address_zone
+	if address_zone:
+		so_values.update(get_zone_values(address_zone))
 	main_invoice = get_main_company_invoice_for_delivery_note(doc.name)
 	if main_invoice:
 		so_values["custom_main_company_invoice"] = main_invoice["name"]
@@ -358,8 +359,8 @@ def create_standalone_transport_sales_order(
 		if main_invoice:
 			so_values["custom_main_company_invoice"] = main_invoice["name"]
 			so_values["custom_main_company_invoice_date"] = main_invoice["posting_date"]
-	if custom_address_zone and so_meta.has_field("custom_address_zone"):
-		so_values["custom_address_zone"] = custom_address_zone
+	if custom_address_zone:
+		so_values.update(get_zone_values(custom_address_zone))
 	if note and so_meta.has_field("custom_note"):
 		so_values["custom_note"] = note.strip()
 	external_delivery_note = (external_delivery_note or "").strip()
@@ -544,6 +545,51 @@ def create_transport_sales_invoice_from_order(transport_sales_order_name: str) -
 	si.insert(ignore_permissions=True)
 	si.submit()
 	return si.name
+
+
+def create_combined_transport_sales_invoice_from_orders(transport_sales_order_names: list[str]) -> str:
+	"""Create one submitted Sales Invoice covering several transport orders of the same customer.
+
+	Every order is mapped onto the same invoice document, so each invoice line keeps its own
+	Sales Order / Delivery Note reference and ERPNext updates the billing status of all orders.
+	"""
+	from erpnext.stock.doctype.delivery_note.delivery_note import (
+		make_sales_invoice as make_sales_invoice_from_dn,
+	)
+
+	names = [name for name in transport_sales_order_names or [] if name]
+	if not names:
+		frappe.throw(_("Select at least one transport order"))
+
+	settings = get_transport_settings()
+	transport_item = settings.get("default_transport_item")
+	if not transport_item:
+		frappe.throw(_("Set Default Transport Service Item in Transport Settings"))
+
+	dn_required = frappe.db.get_single_value("Selling Settings", "dn_required") == "Yes"
+
+	invoice = None
+	for transport_sales_order_name in names:
+		so = frappe.get_doc("Sales Order", transport_sales_order_name)
+		_validate_transport_order_items(so, transport_item)
+
+		if dn_required:
+			transport_dn_name = _get_or_create_transport_delivery_note(
+				transport_sales_order_name, settings
+			)
+			invoice = make_sales_invoice_from_dn(transport_dn_name, target_doc=invoice)
+		else:
+			invoice = make_sales_invoice(transport_sales_order_name, target_doc=invoice)
+
+	if invoice is None or not invoice.get("items"):
+		frappe.throw(_("No billable items found for the selected transport orders"))
+
+	_validate_transport_order_items(invoice, transport_item)
+	_apply_transport_accounting_dimensions(invoice, settings)
+	invoice.flags.ignore_permissions = True
+	invoice.insert(ignore_permissions=True)
+	invoice.submit()
+	return invoice.name
 
 
 def _get_or_create_transport_delivery_note(

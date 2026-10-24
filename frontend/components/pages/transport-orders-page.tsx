@@ -7,9 +7,9 @@ import {
   assignDispatchDriver,
   cancelTransportOrder,
   createBillingCustomer,
+  createCombinedTransportInvoice,
   createPortalTransportCustomer,
   createStandaloneTransportOrder,
-  createTransportInvoice,
   getDrivers,
   getTransportOrderDefaults,
   getTransportOrders,
@@ -36,7 +36,7 @@ import { SearchCombobox } from '@/components/ui/search-combobox'
 import { ActionMenu, type ActionMenuItem } from '@/components/ui/action-menu'
 import { FilterToolbar, matchesText } from '@/components/layout/filter-toolbar'
 import { ListExportActions } from '@/components/ui/list-export-actions'
-import { formatMoney, openPrintView } from '@/lib/utils'
+import { cn, formatMoney, openPrintView } from '@/lib/utils'
 import type { ListExportColumn } from '@/lib/list-export'
 import { useAuth } from '@/contexts/auth-context'
 import { Ban, CalendarClock, CheckCircle2, FilePlus2, KeyRound, Loader2, PackageCheck, Pencil, Plus, Printer, Trash2 } from 'lucide-react'
@@ -113,12 +113,15 @@ export default function TransportOrdersPage() {
   const [lastCustomerDnDate, setLastCustomerDnDate] = useState('')
   const [saving, setSaving] = useState(false)
   const [approving, setApproving] = useState<string | null>(null)
-  const [invoicing, setInvoicing] = useState<string | null>(null)
+  const [invoicing, setInvoicing] = useState(false)
   const [regeneratingOtp, setRegeneratingOtp] = useState<string | null>(null)
   const [approveOrder, setApproveOrder] = useState<TransportOrderRow | null>(null)
   const [approveSendOtp, setApproveSendOtp] = useState(true)
   const [markingDelivered, setMarkingDelivered] = useState<string | null>(null)
-  const [invoiceOrder, setInvoiceOrder] = useState<TransportOrderRow | null>(null)
+  const [selectedOrders, setSelectedOrders] = useState<string[]>([])
+  const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(false)
+  const [invoiceCustomer, setInvoiceCustomer] = useState('')
+  const [invoiceSelection, setInvoiceSelection] = useState<string[]>([])
   const [invoiceNote, setInvoiceNote] = useState('')
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null)
   const [rescheduleOrder, setRescheduleOrder] = useState<TransportOrderRow | null>(null)
@@ -221,6 +224,78 @@ export default function TransportOrdersPage() {
       return true
     })
   }, [data, customer, deliveryStatus])
+
+  const invoiceEligibleByName = useMemo(() => {
+    const map = new Map<string, TransportOrderRow>()
+    for (const order of data || []) {
+      if (isInvoiceEligible(order)) map.set(order.name, order)
+    }
+    return map
+  }, [data])
+
+  const selectedRows = useMemo(
+    () =>
+      selectedOrders
+        .map((name) => invoiceEligibleByName.get(name))
+        .filter((order): order is TransportOrderRow => Boolean(order)),
+    [selectedOrders, invoiceEligibleByName]
+  )
+
+  const mixedCustomers = useMemo(
+    () => new Set(selectedRows.map((order) => orderCustomerKey(order))).size > 1,
+    [selectedRows]
+  )
+
+  const selectedTotal = selectedRows.reduce(
+    (sum, order) => sum + Number(order.grand_total || 0),
+    0
+  )
+
+  const invoiceCandidates = useMemo(
+    () =>
+      Array.from(invoiceEligibleByName.values()).filter(
+        (order) => orderCustomerKey(order) === invoiceCustomer
+      ),
+    [invoiceEligibleByName, invoiceCustomer]
+  )
+
+  const dialogRows = useMemo(
+    () =>
+      invoiceSelection
+        .map((name) => invoiceEligibleByName.get(name))
+        .filter((order): order is TransportOrderRow => Boolean(order)),
+    [invoiceSelection, invoiceEligibleByName]
+  )
+
+  const dialogTotal = dialogRows.reduce((sum, order) => sum + Number(order.grand_total || 0), 0)
+
+  function orderCustomerKey(order: TransportOrderRow) {
+    return order.customer || order.customer_name || ''
+  }
+
+  function orderCustomerLabel(order?: TransportOrderRow | null) {
+    return order?.customer_name || order?.customer || ''
+  }
+
+  function isInvoiceEligible(order: TransportOrderRow) {
+    return (
+      Number(order.docstatus) === 1 &&
+      order.delivery_status === 'Pending Invoicing' &&
+      !order.transport_sales_invoice
+    )
+  }
+
+  function toggleSelectedOrder(name: string) {
+    setSelectedOrders((prev) =>
+      prev.includes(name) ? prev.filter((value) => value !== name) : [...prev, name]
+    )
+  }
+
+  function toggleInvoiceOrder(name: string) {
+    setInvoiceSelection((prev) =>
+      prev.includes(name) ? prev.filter((value) => value !== name) : [...prev, name]
+    )
+  }
 
   function driverLabel(name?: string) {
     if (!name) return 'Not assigned'
@@ -708,38 +783,67 @@ export default function TransportOrdersPage() {
     }
   }
 
-  function openCreateInvoice(order: TransportOrderRow) {
-    setInvoiceOrder(order)
-    setInvoiceNote(order.custom_note || '')
+  function openInvoiceDialog(orders: TransportOrderRow[]) {
+    const eligible = orders.filter(isInvoiceEligible)
+    if (!eligible.length) {
+      toast.error('Only delivered orders pending invoicing can be invoiced')
+      return
+    }
+    const customerKey = orderCustomerKey(eligible[0])
+    if (eligible.some((order) => orderCustomerKey(order) !== customerKey)) {
+      toast.error('Select orders for a single customer to combine them into one invoice')
+      return
+    }
+    setInvoiceCustomer(customerKey)
+    setInvoiceSelection(eligible.map((order) => order.name))
+    setInvoiceNote(eligible[0].custom_note || '')
+    setInvoiceFile(null)
+    setInvoiceDialogOpen(true)
+  }
+
+  function closeInvoiceDialog() {
+    if (invoicing) return
+    setInvoiceDialogOpen(false)
+    setInvoiceSelection([])
+    setInvoiceNote('')
     setInvoiceFile(null)
   }
 
   async function handleCreateInvoice() {
-    if (!invoiceOrder) return
-    setInvoicing(invoiceOrder.name)
+    if (!invoiceSelection.length) {
+      toast.error('Select at least one order to invoice')
+      return
+    }
+    setInvoicing(true)
     try {
-      let fileUrl = invoiceOrder.custom_final_customer_feedback_document || ''
+      let fileUrl = ''
       if (invoiceFile) {
         fileUrl = await uploadAttachedFile(
           invoiceFile,
           'Sales Order',
-          invoiceOrder.name,
+          invoiceSelection[0],
           'custom_final_customer_feedback_document'
         )
       }
-      const result = await createTransportInvoice(invoiceOrder.name, {
-        custom_note: invoiceNote,
+      const result = await createCombinedTransportInvoice(invoiceSelection, {
+        custom_note: invoiceNote.trim() || undefined,
         custom_final_customer_feedback_document: fileUrl || undefined,
       })
-      toast.success(`Invoice ${result.sales_invoice} created — delivery Completed`)
-      setInvoiceOrder(null)
+      toast.success(
+        invoiceSelection.length > 1
+          ? `Invoice ${result.sales_invoice} created for ${invoiceSelection.length} orders — delivery Completed`
+          : `Invoice ${result.sales_invoice} created — delivery Completed`
+      )
+      setInvoiceDialogOpen(false)
+      setInvoiceSelection([])
       setInvoiceNote('')
       setInvoiceFile(null)
+      setSelectedOrders([])
       mutate()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not create invoice')
     } finally {
-      setInvoicing(null)
+      setInvoicing(false)
     }
   }
 
@@ -875,6 +979,52 @@ export default function TransportOrdersPage() {
         ]}
       />
 
+      {selectedRows.length > 0 ? (
+        <div className="mb-4 flex flex-col gap-3 rounded-[1.25rem] bg-secondary/10 p-4 ring-1 ring-secondary/20 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-sm">
+            <p className="font-medium text-foreground">
+              {selectedRows.length} order{selectedRows.length === 1 ? '' : 's'} selected
+            </p>
+            <p className="text-muted-foreground">
+              {mixedCustomers ? 'Multiple customers selected' : orderCustomerLabel(selectedRows[0])}
+              {' · '}
+              {formatMoney(selectedTotal, selectedRows[0]?.currency)}
+            </p>
+            <p
+              className={cn(
+                'mt-1 text-xs',
+                mixedCustomers ? 'text-destructive' : 'text-muted-foreground'
+              )}
+            >
+              {mixedCustomers
+                ? 'Only orders for one customer can be combined into a single invoice.'
+                : selectedRows.length > 1
+                  ? 'These orders will be combined into one final invoice for this customer.'
+                  : 'Select more orders of this customer to combine them into one invoice.'}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={() => setSelectedOrders([])}>
+              Clear
+            </Button>
+            <Button
+              type="button"
+              disabled={mixedCustomers || invoicing}
+              onClick={() => openInvoiceDialog(selectedRows)}
+            >
+              {invoicing ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <FilePlus2 className="mr-2 h-4 w-4" />
+              )}
+              {selectedRows.length > 1
+                ? `Combine ${selectedRows.length} orders into one invoice`
+                : 'Create invoice'}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       {isLoading ? (
         <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
       ) : (
@@ -882,6 +1032,30 @@ export default function TransportOrdersPage() {
           rows={rows as unknown as Record<string, unknown>[]}
           emptyText="No transport orders match these filters."
           columns={[
+            {
+              key: 'select',
+              label: '',
+              render: (row) => {
+                const order = row as unknown as TransportOrderRow
+                const eligible = isInvoiceEligible(order)
+                return (
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-border"
+                    checked={eligible && selectedOrders.includes(order.name)}
+                    onChange={() => toggleSelectedOrder(order.name)}
+                    onClick={(event) => event.stopPropagation()}
+                    disabled={!eligible}
+                    title={
+                      eligible
+                        ? `Select ${order.name} to combine into one invoice`
+                        : 'Only submitted orders pending invoicing can be combined'
+                    }
+                    aria-label={`Select ${order.name}`}
+                  />
+                )
+              },
+            },
             { key: 'name', label: 'Sales Order' },
             { key: 'custom_delivery_note_to_be_transported', label: 'Delivery Note' },
             { key: 'customer_name', label: 'Customer' },
@@ -918,8 +1092,8 @@ export default function TransportOrdersPage() {
               label: 'Driver / Truck',
               render: (row) => {
                 const driverName = String(row.driver || 'Not assigned')
-                const truck = row.vehicle_no ? vehicleLabel(row.vehicle_no) : null
-                return truck && row.driver ? `${driverLabel(row.driver)} · ${truck}` : driverName
+                const truck = row.vehicle_no ? vehicleLabel(String(row.vehicle_no)) : null
+                return truck && row.driver ? `${driverLabel(String(row.driver))} · ${truck}` : driverName
               },
             },
             { key: 'grand_total', label: 'Total', render: (row) => formatMoney(Number(row.grand_total || 0), String(row.currency || '')) },
@@ -949,7 +1123,7 @@ export default function TransportOrdersPage() {
                 const needsOtp = Boolean(order.otp_missing || order.otp_expired)
                 const busy =
                   approving === order.name ||
-                  invoicing === order.name ||
+                  invoicing ||
                   regeneratingOtp === order.name ||
                   rescheduling === order.name ||
                   cancelling === order.name ||
@@ -1011,18 +1185,13 @@ export default function TransportOrdersPage() {
                   })
                 }
 
-                if (isSubmitted && pendingInvoice) {
+                if (isSubmitted && pendingInvoice && !order.transport_sales_invoice) {
                   menuItems.push({
                     key: 'invoice',
-                    label: invoicing === order.name ? 'Creating invoice…' : 'Create invoice',
-                    icon:
-                      invoicing === order.name ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <FilePlus2 className="h-4 w-4" />
-                      ),
-                    disabled: invoicing === order.name,
-                    onClick: () => openCreateInvoice(order),
+                    label: 'Create / combine invoice',
+                    icon: <FilePlus2 className="h-4 w-4" />,
+                    disabled: busy,
+                    onClick: () => openInvoiceDialog([order]),
                   })
                 }
 
@@ -1425,41 +1594,88 @@ export default function TransportOrdersPage() {
       </Modal>
 
       <Modal
-        open={!!invoiceOrder}
-        title="Create Transport Invoice"
-        onClose={() => {
-          if (invoicing) return
-          setInvoiceOrder(null)
-          setInvoiceNote('')
-          setInvoiceFile(null)
-        }}
+        open={invoiceDialogOpen}
+        title={invoiceSelection.length > 1 ? 'Combine Orders into One Invoice' : 'Create Transport Invoice'}
+        onClose={closeInvoiceDialog}
+        className="max-w-2xl"
       >
-        {invoiceOrder ? (
+        {invoiceDialogOpen ? (
           <div className="space-y-5">
             <div className="flex items-start gap-4 rounded-2xl bg-secondary/10 p-4 ring-1 ring-secondary/20">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-secondary/15 text-secondary">
                 <FilePlus2 className="h-5 w-5" />
               </div>
               <div>
-                <p className="font-medium text-foreground">Create transport sales invoice?</p>
+                <p className="font-medium text-foreground">
+                  {invoiceSelection.length > 1
+                    ? `Create one final invoice for ${invoiceSelection.length} orders?`
+                    : 'Create transport sales invoice?'}
+                </p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  This will invoice {invoiceOrder.name} and set delivery to Completed.
+                  Customer{' '}
+                  <span className="font-medium text-foreground">
+                    {orderCustomerLabel(dialogRows[0]) || invoiceCustomer}
+                  </span>
+                  {' — every order on this invoice is marked delivery Completed.'}
                 </p>
               </div>
             </div>
-            <div className="grid gap-2 rounded-2xl border border-border bg-muted/30 p-4 text-sm">
-              <div className="flex justify-between gap-4">
-                <span className="text-muted-foreground">Transport order</span>
-                <span className="font-medium">{invoiceOrder.name}</span>
+
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-1">
+                <p className="text-sm font-medium">Orders pending invoicing</p>
+                <p className="text-xs text-muted-foreground">
+                  Tick the orders to combine into one Sales Invoice
+                </p>
               </div>
-              <div className="flex justify-between gap-4">
-                <span className="text-muted-foreground">Delivery note</span>
-                <span className="font-medium">{invoiceOrder.custom_delivery_note_to_be_transported}</span>
+              <div className="max-h-64 space-y-2 overflow-y-auto rounded-2xl border border-border bg-muted/20 p-2">
+                {invoiceCandidates.length ? (
+                  invoiceCandidates.map((order) => {
+                    const checked = invoiceSelection.includes(order.name)
+                    return (
+                      <label
+                        key={order.name}
+                        className={cn(
+                          'flex cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm transition-colors',
+                          checked ? 'border-secondary/40 bg-secondary/10' : 'border-border bg-card'
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 rounded border-border"
+                          checked={checked}
+                          onChange={() => toggleInvoiceOrder(order.name)}
+                          disabled={invoicing}
+                        />
+                        <span className="flex-1">
+                          <span className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="font-medium text-foreground">{order.name}</span>
+                            <span className="font-medium">
+                              {formatMoney(Number(order.grand_total || 0), order.currency)}
+                            </span>
+                          </span>
+                          <span className="mt-1 block text-xs text-muted-foreground">
+                            Delivery Note: {order.custom_delivery_note_to_be_transported || '—'}
+                          </span>
+                        </span>
+                      </label>
+                    )
+                  })
+                ) : (
+                  <p className="p-3 text-sm text-muted-foreground">
+                    No orders for this customer are pending invoicing.
+                  </p>
+                )}
               </div>
-              <div className="flex justify-between gap-4">
-                <span className="text-muted-foreground">Charge</span>
-                <span className="font-medium">{formatMoney(Number(invoiceOrder.grand_total || 0), invoiceOrder.currency)}</span>
-              </div>
+            </div>
+
+            <div className="flex items-center justify-between rounded-2xl border border-border bg-muted/30 p-4 text-sm">
+              <span className="text-muted-foreground">
+                {invoiceSelection.length} order{invoiceSelection.length === 1 ? '' : 's'} on one invoice
+              </span>
+              <span className="text-base font-semibold text-foreground">
+                {formatMoney(dialogTotal, dialogRows[0]?.currency)}
+              </span>
             </div>
 
             <div className="space-y-3 border-t border-border pt-4">
@@ -1474,12 +1690,10 @@ export default function TransportOrdersPage() {
                 />
                 {invoiceFile ? (
                   <p className="mt-1 text-xs text-muted-foreground">Selected: {invoiceFile.name}</p>
-                ) : invoiceOrder.custom_final_customer_feedback_document ? (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Existing: {invoiceOrder.custom_final_customer_feedback_document}
-                  </p>
                 ) : (
-                  <p className="mt-1 text-xs text-muted-foreground">Optional — attach signed POD or feedback</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Optional — attached to all orders on this invoice
+                  </p>
                 )}
               </div>
               <div>
@@ -1495,25 +1709,22 @@ export default function TransportOrdersPage() {
             </div>
 
             <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setInvoiceOrder(null)
-                  setInvoiceNote('')
-                  setInvoiceFile(null)
-                }}
-                disabled={!!invoicing}
-              >
+              <Button type="button" variant="outline" onClick={closeInvoiceDialog} disabled={!!invoicing}>
                 Cancel
               </Button>
-              <Button type="button" onClick={handleCreateInvoice} disabled={!!invoicing}>
-                {invoicing === invoiceOrder.name ? (
+              <Button
+                type="button"
+                onClick={handleCreateInvoice}
+                disabled={!!invoicing || !invoiceSelection.length}
+              >
+                {invoicing ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <>
                     <FilePlus2 className="mr-2 h-4 w-4" />
-                    Create Invoice
+                    {invoiceSelection.length > 1
+                      ? `Create Invoice (${invoiceSelection.length} orders)`
+                      : 'Create Invoice'}
                   </>
                 )}
               </Button>
