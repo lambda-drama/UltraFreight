@@ -3,6 +3,7 @@
 import { cn } from '@/lib/utils'
 import { APP_TITLE } from '@/lib/branding'
 import { useNavigation } from '@/contexts/navigation-context'
+import { useAuth } from '@/contexts/auth-context'
 import {
   LayoutDashboard,
   Truck,
@@ -12,9 +13,13 @@ import {
   KeyRound,
   Receipt,
   MessageSquare,
+  Mail,
+  Settings,
 } from 'lucide-react'
 
-const navSections = [
+const MASTER_ROLES = ['System Manager', 'Administrator']
+
+const baseNavSections = [
   {
     label: 'Overview',
     items: [{ name: 'Dashboard', view: 'dashboard', icon: LayoutDashboard }],
@@ -24,7 +29,6 @@ const navSections = [
     items: [
       { name: 'Transport Orders', view: 'transport-orders', icon: FileText },
       { name: 'Delivery Orders', view: 'dispatches', icon: Truck },
-      { name: 'Drivers', view: 'drivers', icon: Users },
       { name: 'Tracker', view: 'tracker', icon: MapPin },
     ],
   },
@@ -35,12 +39,33 @@ const navSections = [
       { name: 'Invoices', view: 'invoices', icon: Receipt },
       { name: 'Confirmation Logs', view: 'confirmation-logs', icon: MessageSquare },
       { name: 'SMS Log', view: 'sms-logs', icon: MessageSquare },
+      { name: 'Email Log', view: 'email-logs', icon: Mail },
     ],
   },
 ]
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { activeView, navigate } = useNavigation()
+  const { user } = useAuth()
+  const canSeeMaster = Boolean(
+    user?.name === 'Administrator' || user?.roles?.some((role) => MASTER_ROLES.includes(role))
+  )
+
+  const navSections = canSeeMaster
+    ? [
+        ...baseNavSections,
+        {
+          label: 'Master',
+          items: [
+            { name: 'Transport Customers', view: 'transport-customers', icon: Users },
+            { name: 'Drivers', view: 'master-drivers', icon: Users },
+            { name: 'Trucks', view: 'master-trucks', icon: Truck },
+            { name: 'Zones', view: 'address-zones', icon: MapPin },
+            { name: 'Transport Settings', view: 'transport-settings', icon: Settings },
+          ],
+        },
+      ]
+    : baseNavSections
 
   return (
     <div className="flex h-full w-full flex-col bg-sidebar text-sidebar-foreground">

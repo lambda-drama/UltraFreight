@@ -46,14 +46,14 @@ fixtures = [
 					"Delivery Note-otp_expires_at",
 					"Delivery Note-confirmation_log",
 					"Delivery Note-sms_status",
+					"Delivery Note-email_status",
 					"Delivery Note-transport_sales_order",
 					"Delivery Note-transport_sales_invoice",
 					"Driver-transport_dispatch_section",
 					"Driver-unique_key",
 					"Driver-vehicle_number",
 					"Driver-transport_company",
-     
-     		# Sales Order Custom Fields
+					# Sales Order Custom Fields
 					"Sales Order-custom_last_customer_delivery_note_date",
 					"Sales Order-custom_last_customer_delivery_note",
 					"Sales Order-custom_last_customer_invoice_date",
@@ -65,12 +65,13 @@ fixtures = [
 					"Sales Order-custom_final_customer_feedback_document",
 					"Sales Order-is_transport_charge_order",
 					"Sales Order-custom_last_customer_invoice",
-
-					#address
+					# address
 					"Sales Order-custom_reason_for_reschedule",
 					"Sales Order-custom_reschedule_transport_order",
 					"Sales Order-custom_address_zone",
-					"Sales Order-custom_completed_without_otp"
+					"Sales Order-custom_completed_without_otp",
+					"Sales Order-custom_customer_zone",
+					"Sales Order-custom_section_break_pfwwy",
 				),
 			]
 		],
@@ -94,7 +95,7 @@ website_route_rules = [
 	{"from_route": "/driver", "to_route": "driver"},
 	{"from_route": "/driver/<path:app_path>", "to_route": "driver"},
 	# Legacy SMS/email links → Driver Portal
-	{"from_route": "/driver-confirmation", "to_route": "driver-confirmation"},
+	{"from_route": "/driver-confirmation", "to_route": "driver_confirmation"},
 ]
 
 # Includes in <head>
@@ -102,7 +103,7 @@ website_route_rules = [
 
 # include js, css files in header of desk.html
 # app_include_css = "/assets/ultrafreight/css/ultrafreight.css"
-# app_include_js = "/assets/ultrafreight/js/ultrafreight.js"
+app_include_js = "ultrafreight.bundle.js"
 
 # include js, css files in header of web template
 # web_include_css = "/assets/ultrafreight/css/ultrafreight.css"
@@ -123,7 +124,7 @@ doctype_js = {
 	"Sales Order": "public/js/sales_order.js",
 	"Delivery Note": "public/js/delivery_note.js",
 }
-# doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
+doctype_list_js = {"Sales Order": "public/js/sales_order_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
 
@@ -219,6 +220,12 @@ doc_events = {
 	},
 	"Sales Invoice": {
 		"on_submit": "ultrafreight.ultra_freight.custom.sales_invoice_hooks.sync_main_company_invoice_on_submit",
+	},
+	"Sales Order": {
+		"validate": "ultrafreight.ultra_freight.utils.zone_field.normalize_order_zone_fields",
+	},
+	"Address Zone": {
+		"on_update": "ultrafreight.ultra_freight.api.zone_pricing.sync_draft_transport_orders_on_zone_update",
 	},
 }
 
@@ -332,4 +339,3 @@ override_doctype_class = {
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
-

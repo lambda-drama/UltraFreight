@@ -15,6 +15,12 @@ import OtpsPage from '@/components/pages/otps-page'
 import InvoicesPage from '@/components/pages/invoices-page'
 import ConfirmationLogsPage from '@/components/pages/confirmation-logs-page'
 import SmsPage from '@/components/pages/sms-page'
+import EmailPage from '@/components/pages/email-page'
+import TransportSettingsPage from '@/components/pages/transport-settings-page'
+import TransportCustomersMasterPage from '@/components/pages/transport-customers-master-page'
+import DriversMasterPage from '@/components/pages/drivers-master-page'
+import TrucksMasterPage from '@/components/pages/trucks-master-page'
+import AddressZonesMasterPage from '@/components/pages/address-zones-master-page'
 import DriverPortalPage from '@/components/pages/driver-portal-page'
 
 function LoadingScreen() {
@@ -54,6 +60,18 @@ function AppContent() {
         return <ConfirmationLogsPage />
       case 'sms-logs':
         return <SmsPage />
+      case 'email-logs':
+        return <EmailPage />
+      case 'transport-settings':
+        return <TransportSettingsPage />
+      case 'transport-customers':
+        return <TransportCustomersMasterPage />
+      case 'master-drivers':
+        return <DriversMasterPage />
+      case 'master-trucks':
+        return <TrucksMasterPage />
+      case 'address-zones':
+        return <AddressZonesMasterPage />
       default:
         return <DashboardPage />
     }

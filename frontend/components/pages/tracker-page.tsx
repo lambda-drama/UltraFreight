@@ -16,6 +16,8 @@ import {
   Select,
 } from '@/components/ui/primitives'
 import { formatDate } from '@/lib/utils'
+import { ListExportActions } from '@/components/ui/list-export-actions'
+import type { ListExportColumn } from '@/lib/list-export'
 
 const STATUS_OPTIONS = [
   { value: 'In Transit', label: 'In Transit' },
@@ -85,6 +87,30 @@ export default function TrackerPage() {
       <PageHeader
         title="Tracker"
         description="Search by delivery ID, OTP, or transport customer to see current status and movement history"
+        action={
+          <ListExportActions
+            title="Delivery Tracker"
+            columns={
+              [
+                { key: 'name', label: 'Delivery Note' },
+                {
+                  key: 'transport_customer_name',
+                  label: 'Customer',
+                  value: (row) => String(row.transport_customer_name || row.customer_name || ''),
+                },
+                { key: 'driver', label: 'Driver' },
+                { key: 'delivery_status', label: 'Status' },
+                { key: 'otp', label: 'OTP' },
+                {
+                  key: 'transport_address',
+                  label: 'Address',
+                  value: (row) => String(row.transport_address || ''),
+                },
+              ] satisfies ListExportColumn[]
+            }
+            rows={(data || []) as unknown as Record<string, unknown>[]}
+          />
+        }
       />
 
       <Card className="mb-6">

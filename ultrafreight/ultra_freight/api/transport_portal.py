@@ -1,12 +1,18 @@
 import frappe
 from frappe import _
-from frappe.utils import flt, now_datetime
+from frappe.utils import cint, flt, now_datetime
 
-from ultrafreight.ultra_freight.utils.transport_settings import get_transport_settings
-
-
-from ultrafreight.ultra_freight.utils.delivery_status import normalize_delivery_status as _normalize_delivery_status
+from ultrafreight.ultra_freight.utils.delivery_status import (
+	normalize_delivery_status as _normalize_delivery_status,
+)
+from ultrafreight.ultra_freight.utils.email_log import get_delivery_email_logs
 from ultrafreight.ultra_freight.utils.sms_log import get_delivery_sms_logs
+from ultrafreight.ultra_freight.utils.transport_settings import get_transport_settings
+from ultrafreight.ultra_freight.utils.zone_field import (
+	get_order_zone,
+	get_zone_fields,
+	set_order_zone,
+)
 
 
 def _require_login():
@@ -39,11 +45,14 @@ def _transport_sales_order_filters(extra: dict | None = None) -> dict:
 
 
 def _get_linked_delivery_notes() -> list[str]:
-	return frappe.get_all(
-		"Sales Order",
-		filters=_transport_sales_order_filters(),
-		pluck="custom_delivery_note_to_be_transported",
-	) or []
+	return (
+		frappe.get_all(
+			"Sales Order",
+			filters=_transport_sales_order_filters(),
+			pluck="custom_delivery_note_to_be_transported",
+		)
+		or []
+	)
 
 
 def _dispatch_filters(extra: dict | None = None) -> dict:
@@ -97,8 +106,10 @@ def _ensure_driver_access(driver_name: str):
 	if not frappe.db.exists("Driver", driver_name):
 		frappe.throw(_("Driver not found"))
 	company = _transport_company()
-	if company and frappe.db.get_value("Driver", driver_name, "transport_company") != company:
-		frappe.throw(_("This driver belongs to another transport company"))
+	if company:
+		driver_company = frappe.db.get_value("Driver", driver_name, "transport_company")
+		if driver_company and driver_company != company:
+			frappe.throw(_("This driver belongs to another transport company"))
 
 
 @frappe.whitelist()
@@ -111,7 +122,9 @@ def get_dashboard_stats():
 		filters={**dispatch_filters, "transport_sales_invoice": ("is", "set")},
 		fields=["name", "transport_sales_invoice", "transport_customer_name", "transport_customer"],
 	)
-	invoice_names = list({row.transport_sales_invoice for row in dn_invoice_rows if row.transport_sales_invoice})
+	invoice_names = list(
+		{row.transport_sales_invoice for row in dn_invoice_rows if row.transport_sales_invoice}
+	)
 
 	transport_invoices = 0
 	total_invoiced_amount = 0
@@ -166,9 +179,7 @@ def get_dashboard_stats():
 	monthly_invoices = _get_monthly_invoice_trend(invoice_records)
 
 	return {
-		"open_dispatches": frappe.db.count(
-			"Delivery Note", {**dispatch_filters, "delivery_status": "Open"}
-		),
+		"open_dispatches": frappe.db.count("Delivery Note", {**dispatch_filters, "delivery_status": "Open"}),
 		"needs_action": len(
 			frappe.get_all(
 				"Delivery Note",
@@ -181,9 +192,7 @@ def get_dashboard_stats():
 			"Delivery Note",
 			{**dispatch_filters, "delivery_status": ("in", ["Open", "", None])},
 		),
-		"in_transit": frappe.db.count(
-			"Delivery Note", {**dispatch_filters, "delivery_status": "In Transit"}
-		),
+		"in_transit": frappe.db.count("Delivery Note", {**dispatch_filters, "delivery_status": "In Transit"}),
 		"pending_invoicing": frappe.db.count(
 			"Delivery Note", {**dispatch_filters, "delivery_status": "Pending Invoicing"}
 		),
@@ -206,7 +215,10 @@ def get_dashboard_stats():
 		"transport_invoices": transport_invoices,
 		"drivers": frappe.db.count(
 			"Driver",
-			{"status": "Active", **({"transport_company": _transport_company()} if _transport_company() else {})},
+			{
+				"status": "Active",
+				**({"transport_company": _transport_company()} if _transport_company() else {}),
+			},
 		),
 		"currency": currency,
 		"total_invoiced_amount": total_invoiced_amount,
@@ -219,7 +231,7 @@ def get_dashboard_stats():
 
 
 def _get_monthly_invoice_trend(invoice_records: list, months: int = 6) -> list[dict]:
-	from frappe.utils import getdate, add_months
+	from frappe.utils import add_months, getdate
 
 	if not invoice_records:
 		return []
@@ -272,6 +284,7 @@ def get_dispatches(status: str | None = None, filter: str | None = None, search:
 			"posting_date",
 			"delivery_status",
 			"sms_status",
+			"email_status",
 			"driver",
 			"vehicle_no",
 			"transport_customer_name",
@@ -417,6 +430,8 @@ def get_dispatch_detail(delivery_note: str):
 		"confirmation_logs": confirmation_logs,
 		"sms_logs": get_delivery_sms_logs(doc.name),
 		"sms_status": doc.get("sms_status") or "Not Sent",
+		"email_logs": get_delivery_email_logs(doc.name),
+		"email_status": doc.get("email_status") or "Not Sent",
 		"movements": _get_delivery_movements(delivery_note),
 	}
 
@@ -495,6 +510,341 @@ def track_deliveries(query: str | None = None, status: str | None = "In Transit"
 
 
 @frappe.whitelist()
+def get_transport_order_defaults():
+	_require_login()
+	settings = get_transport_settings()
+	company = settings.get("ultra_transport_company")
+	currency = _get_transport_currency()
+	return {
+		"default_transport_charges": flt(settings.get("default_transport_charges")),
+		"default_transport_item": settings.get("default_transport_item"),
+		"transport_company": company,
+		"currency": currency,
+	}
+
+
+@frappe.whitelist()
+def search_billing_customers(search: str = "", limit: int = 20):
+	_require_login()
+	limit = max(1, min(int(limit or 20), 50))
+	search = (search or "").strip()
+
+	if len(search) >= 2:
+		return frappe.get_all(
+			"Customer",
+			or_filters=[
+				["name", "like", f"%{search}%"],
+				["customer_name", "like", f"%{search}%"],
+			],
+			fields=["name", "customer_name"],
+			order_by="modified desc",
+			limit=limit,
+		)
+
+	recent = frappe.get_all(
+		"Sales Order",
+		filters=_transport_sales_order_filters(),
+		fields=["customer", "customer_name"],
+		order_by="modified desc",
+		limit=limit * 3,
+	)
+	seen = set()
+	rows = []
+	for row in recent:
+		key = row.customer
+		if not key or key in seen:
+			continue
+		seen.add(key)
+		rows.append({"name": row.customer, "customer_name": row.customer_name})
+		if len(rows) >= limit:
+			break
+	return rows
+
+
+@frappe.whitelist()
+def create_billing_customer(customer_name: str, customer_type: str | None = None):
+	"""Quick-create an ERPNext Customer from the New Transport Order form."""
+	_require_login()
+	customer_name = (customer_name or "").strip()
+	if not customer_name:
+		frappe.throw(_("Customer name is required"))
+
+	existing = frappe.db.get_value("Customer", {"customer_name": customer_name}, "name")
+	if existing:
+		return {
+			"name": existing,
+			"customer_name": frappe.db.get_value("Customer", existing, "customer_name") or customer_name,
+			"already_existed": 1,
+		}
+
+	customer_type = (customer_type or "Company").strip() or "Company"
+	defaults = {}
+	if frappe.db.exists("DocType", "Selling Settings"):
+		defaults = frappe.db.get_singles_dict("Selling Settings") or {}
+
+	customer_group = defaults.get("customer_group")
+	if not customer_group or frappe.db.get_value("Customer Group", customer_group, "is_group"):
+		customer_group = frappe.db.get_value(
+			"Customer Group",
+			{"is_group": 0},
+			"name",
+			order_by="modified desc",
+		)
+	if not customer_group:
+		frappe.throw(_("Set a non-group Customer Group in Selling Settings first"))
+
+	territory = defaults.get("territory")
+	if not territory or frappe.db.get_value("Territory", territory, "is_group"):
+		territory = frappe.db.get_value(
+			"Territory",
+			{"is_group": 0},
+			"name",
+			order_by="modified desc",
+		)
+
+	doc = frappe.get_doc(
+		{
+			"doctype": "Customer",
+			"customer_name": customer_name,
+			"customer_type": customer_type if customer_type in ("Company", "Individual") else "Company",
+			"customer_group": customer_group,
+			"territory": territory,
+		}
+	)
+	doc.flags.ignore_permissions = True
+	doc.flags.ignore_mandatory = True
+	doc.insert(ignore_permissions=True, ignore_mandatory=True)
+	return {"name": doc.name, "customer_name": doc.customer_name, "already_existed": 0}
+
+
+@frappe.whitelist()
+def create_portal_transport_customer(
+	customer_name: str,
+	phone_number: str,
+	email: str | None = None,
+	delivery_address: str | None = None,
+	city: str | None = None,
+	send_otp: int | str = 1,
+	zones=None,
+):
+	"""Quick-create a Transport Customer from the New Transport Order form."""
+	_require_login()
+	from ultrafreight.ultra_freight.api.transport_dispatch import get_zones_for_transport_customer
+	from ultrafreight.ultra_freight.utils.transport_customer import find_or_create_transport_customer
+
+	customer_name = (customer_name or "").strip()
+	phone_number = (phone_number or "").strip()
+	if not customer_name or not phone_number:
+		frappe.throw(_("Customer name and phone are required"))
+
+	name = find_or_create_transport_customer(
+		customer_name=customer_name,
+		phone_number=phone_number,
+		email=(email or "").strip() or None,
+		delivery_address=(delivery_address or "").strip() or None,
+		city=(city or "").strip() or None,
+	)
+	doc = frappe.get_doc("Transport Customer", name)
+	if doc.meta.has_field("send_otp"):
+		doc.send_otp = 1 if cint(send_otp) else 0
+
+	zone_rows = _parse_zones_payload(zones)
+	if zone_rows is not None:
+		doc.set("zones", [])
+		for row in zone_rows:
+			doc.append("zones", row)
+
+	doc.flags.ignore_permissions = True
+	doc.save(ignore_permissions=True)
+	return {
+		"name": doc.name,
+		"customer_name": doc.customer_name,
+		"phone_number": doc.phone_number,
+		"email": doc.email,
+		"delivery_address": doc.delivery_address,
+		"city": doc.city,
+		"send_otp": cint(doc.send_otp) if doc.meta.has_field("send_otp") else 1,
+		"zones": get_zones_for_transport_customer(doc.name),
+	}
+
+
+@frappe.whitelist()
+def search_address_zones(search: str = "", limit: int = 20):
+	"""Address Zone options for order / transport-customer forms (any logged-in user)."""
+	_require_login()
+	limit = max(1, min(int(limit or 20), 50))
+	search = (search or "").strip()
+	fields = ["name", "zone_name", "zone_city", "transport_charges"]
+	if len(search) >= 1:
+		return frappe.get_all(
+			"Address Zone",
+			or_filters=[
+				["name", "like", f"%{search}%"],
+				["zone_name", "like", f"%{search}%"],
+				["zone_city", "like", f"%{search}%"],
+			],
+			fields=fields,
+			order_by="modified desc",
+			limit=limit,
+		)
+	return frappe.get_all(
+		"Address Zone",
+		fields=fields,
+		order_by="modified desc",
+		limit=limit,
+	)
+
+
+@frappe.whitelist()
+def search_transport_customers(search: str = "", limit: int = 20):
+	_require_login()
+	limit = max(1, min(int(limit or 20), 50))
+	search = (search or "").strip()
+	fields = [
+		"name",
+		"customer_name",
+		"phone_number",
+		"email",
+		"delivery_address",
+	]
+
+	if len(search) >= 2:
+		return frappe.get_all(
+			"Transport Customer",
+			or_filters=[
+				["name", "like", f"%{search}%"],
+				["customer_name", "like", f"%{search}%"],
+				["phone_number", "like", f"%{search}%"],
+				["email", "like", f"%{search}%"],
+			],
+			fields=fields,
+			order_by="modified desc",
+			limit=limit,
+		)
+
+	return frappe.get_all(
+		"Transport Customer",
+		fields=fields,
+		order_by="modified desc",
+		limit=limit,
+	)
+
+
+@frappe.whitelist()
+def search_linkable_delivery_notes(search: str = "", limit: int = 20):
+	_require_login()
+	from ultrafreight.ultra_freight.api.transport_dispatch import _is_valid_transport_sales_order
+
+	limit = max(1, min(int(limit or 20), 50))
+	search = (search or "").strip()
+	filters = {"require_direct_delivery": 1}
+	fields = [
+		"name",
+		"customer_name",
+		"transport_customer",
+		"transport_customer_name",
+		"transport_phone",
+		"transport_email",
+		"transport_address",
+		"delivery_status",
+		"docstatus",
+		"transport_sales_order",
+		"posting_date",
+	]
+	dn_meta = frappe.get_meta("Delivery Note")
+	if dn_meta.has_field("custom_delivery_note_no"):
+		fields.append("custom_delivery_note_no")
+
+	if len(search) >= 2:
+		or_filters = [
+			["name", "like", f"%{search}%"],
+			["customer_name", "like", f"%{search}%"],
+			["transport_customer_name", "like", f"%{search}%"],
+		]
+		if dn_meta.has_field("custom_delivery_note_no"):
+			or_filters.append(["custom_delivery_note_no", "like", f"%{search}%"])
+		rows = frappe.get_all(
+			"Delivery Note",
+			filters=filters,
+			or_filters=or_filters,
+			fields=fields,
+			order_by="modified desc",
+			limit=limit,
+		)
+	else:
+		rows = frappe.get_all(
+			"Delivery Note",
+			filters=filters,
+			fields=fields,
+			order_by="modified desc",
+			limit=limit,
+		)
+
+	for row in rows:
+		goods_order = frappe.db.get_value(
+			"Delivery Note Item",
+			{"parent": row.name, "against_sales_order": ("is", "set")},
+			"against_sales_order",
+		)
+		existing = row.transport_sales_order
+		row["already_linked"] = bool(
+			existing and _is_valid_transport_sales_order(existing, goods_order, row.name)
+		)
+		parts = [row.name, row.customer_name or ""]
+		if row.get("transport_customer_name"):
+			parts.append(row.transport_customer_name)
+		if row.get("custom_delivery_note_no"):
+			parts.append(f"#{row.custom_delivery_note_no}")
+		row["label"] = " · ".join(part for part in parts if part)
+
+	return rows
+
+
+@frappe.whitelist()
+def create_standalone_transport_order(
+	customer: str,
+	rate: float | None = None,
+	qty: float = 1,
+	delivery_note: str | None = None,
+	custom_address_zone: str | None = None,
+	note: str | None = None,
+	external_delivery_note: str | None = None,
+	transport_customer: str | None = None,
+	transport_customer_name: str | None = None,
+	transport_phone: str | None = None,
+	transport_email: str | None = None,
+	transport_address: str | None = None,
+):
+	_require_login()
+	from ultrafreight.ultra_freight.api.transport_dispatch import create_standalone_transport_sales_order
+
+	name = create_standalone_transport_sales_order(
+		customer=customer,
+		rate=rate,
+		qty=qty,
+		delivery_note=delivery_note,
+		custom_address_zone=custom_address_zone,
+		note=note,
+		external_delivery_note=external_delivery_note,
+		transport_customer=transport_customer,
+		transport_customer_name=transport_customer_name,
+		transport_phone=transport_phone,
+		transport_email=transport_email,
+		transport_address=transport_address,
+	)
+	_ensure_transport_sales_order(name)
+	doc = frappe.get_doc("Sales Order", name)
+	return {
+		"name": doc.name,
+		"customer": doc.customer,
+		"customer_name": doc.customer_name,
+		"grand_total": doc.grand_total,
+		"currency": doc.currency,
+		"custom_delivery_note_to_be_transported": doc.get("custom_delivery_note_to_be_transported"),
+	}
+
+
+@frappe.whitelist()
 def get_transport_orders(docstatus: str | None = None):
 	_require_login()
 	filters = _transport_sales_order_filters()
@@ -522,8 +872,19 @@ def get_transport_orders(docstatus: str | None = None):
 		"custom_reschedule_transport_order",
 		"custom_reason_for_reschedule",
 	]
-	if frappe.get_meta("Sales Order").has_field("custom_address_zone"):
-		fields.append("custom_address_zone")
+	so_meta = frappe.get_meta("Sales Order")
+	for zone_field in get_zone_fields():
+		if zone_field not in fields:
+			fields.append(zone_field)
+	for field in (
+		"transport_customer",
+		"transport_customer_name",
+		"transport_phone",
+		"transport_email",
+		"transport_address",
+	):
+		if so_meta.has_field(field):
+			fields.append(field)
 
 	orders = frappe.get_all(
 		"Sales Order",
@@ -540,6 +901,9 @@ def get_transport_orders(docstatus: str | None = None):
 	)
 
 	for order in orders:
+		# The portal frontend only knows ``custom_address_zone`` while older
+		# sites keep the zone in ``custom_zone_``; always expose the same key.
+		order["custom_address_zone"] = get_order_zone(order)
 		order["items"] = frappe.get_all(
 			"Sales Order Item",
 			filters={"parent": order.name},
@@ -559,6 +923,9 @@ def get_transport_orders(docstatus: str | None = None):
 					"otp_expires_at",
 					"transport_customer",
 					"transport_customer_name",
+					"transport_phone",
+					"transport_email",
+					"transport_address",
 				],
 				as_dict=True,
 			)
@@ -570,16 +937,23 @@ def get_transport_orders(docstatus: str | None = None):
 		order["driver"] = dn_values.driver if dn_values else None
 		order["vehicle_no"] = dn_values.vehicle_no if dn_values else None
 		order["transport_sales_invoice"] = dn_values.transport_sales_invoice if dn_values else None
-		order["transport_customer"] = dn_values.transport_customer if dn_values else None
-		order["transport_customer_name"] = dn_values.transport_customer_name if dn_values else None
+		order["transport_customer"] = (
+			dn_values.transport_customer if dn_values else order.get("transport_customer")
+		)
+		order["transport_customer_name"] = (
+			dn_values.transport_customer_name if dn_values else order.get("transport_customer_name")
+		)
+		order["transport_phone"] = dn_values.transport_phone if dn_values else order.get("transport_phone")
+		order["transport_email"] = dn_values.transport_email if dn_values else order.get("transport_email")
+		order["transport_address"] = (
+			dn_values.transport_address if dn_values else order.get("transport_address")
+		)
 		order["zones"] = get_zones_for_transport_customer(order.get("transport_customer"))
 		order["send_otp"] = get_transport_customer_send_otp(order.get("transport_customer"))
 		order["otp"] = dn_values.otp if dn_values else None
 		order["otp_expires_at"] = dn_values.otp_expires_at if dn_values else None
 		order["otp_expired"] = bool(
-			dn_values
-			and dn_values.otp_expires_at
-			and now_datetime() > dn_values.otp_expires_at
+			dn_values and dn_values.otp_expires_at and now_datetime() > dn_values.otp_expires_at
 		)
 		order["otp_missing"] = bool(dn and not (dn_values and dn_values.otp))
 
@@ -607,6 +981,7 @@ def get_transport_order(name: str):
 		"docstatus": doc.docstatus,
 		"grand_total": doc.grand_total,
 		"currency": doc.currency,
+		"custom_address_zone": get_order_zone(doc),
 		"custom_delivery_note_to_be_transported": doc.custom_delivery_note_to_be_transported,
 		"items": [
 			{
@@ -633,6 +1008,11 @@ def update_transport_order(
 	custom_last_customer_invoice_date: str | None = None,
 	custom_last_customer_delivery_note: str | None = None,
 	custom_last_customer_delivery_note_date: str | None = None,
+	transport_customer: str | None = None,
+	transport_customer_name: str | None = None,
+	transport_phone: str | None = None,
+	transport_email: str | None = None,
+	transport_address: str | None = None,
 ):
 	_require_login()
 	_ensure_transport_sales_order(name)
@@ -648,25 +1028,27 @@ def update_transport_order(
 		row.qty = flt(qty)
 
 	dn_name = doc.get("custom_delivery_note_to_be_transported")
-	transport_customer = (
-		frappe.db.get_value("Delivery Note", dn_name, "transport_customer") if dn_name else None
+	transport_customer_link = (
+		frappe.db.get_value("Delivery Note", dn_name, "transport_customer")
+		if dn_name
+		else doc.get("transport_customer")
 	)
 
-	if custom_address_zone is not None and frappe.get_meta("Sales Order").has_field("custom_address_zone"):
-		if custom_address_zone and transport_customer:
+	if custom_address_zone is not None and get_zone_fields():
+		zone = (custom_address_zone or "").strip() or None
+		if zone and transport_customer_link:
 			valid = frappe.db.exists(
 				"Address Zone Detail",
 				{
-					"parent": transport_customer,
+					"parent": transport_customer_link,
 					"parenttype": "Transport Customer",
-					"zone": custom_address_zone,
+					"zone": zone,
 				},
 			)
 			if not valid:
 				frappe.throw(_("Selected address zone is not linked to this transport customer"))
-		doc.custom_address_zone = custom_address_zone or None
+		set_order_zone(doc, zone)
 		from ultrafreight.ultra_freight.api.transport_dispatch import resolve_transport_charge
-		from ultrafreight.ultra_freight.utils.transport_settings import get_transport_settings
 
 		goods_so = None
 		if dn_name:
@@ -682,8 +1064,8 @@ def update_transport_order(
 			goods_so = goods_so[0][0] if goods_so else None
 		row.rate = resolve_transport_charge(
 			settings=get_transport_settings(),
-			address_zone=doc.custom_address_zone,
-			transport_customer=transport_customer,
+			address_zone=zone,
+			transport_customer=transport_customer_link,
 			goods_sales_order_name=goods_so,
 		)
 	elif rate is not None:
@@ -693,7 +1075,9 @@ def update_transport_order(
 
 	# Keep Main Company Invoice in sync from the linked Delivery Note's goods invoice
 	if dn_name:
-		from ultrafreight.ultra_freight.api.transport_dispatch import get_main_company_invoice_for_delivery_note
+		from ultrafreight.ultra_freight.api.transport_dispatch import (
+			get_main_company_invoice_for_delivery_note,
+		)
 
 		main_invoice = get_main_company_invoice_for_delivery_note(dn_name)
 		if main_invoice:
@@ -709,14 +1093,53 @@ def update_transport_order(
 	if custom_last_customer_delivery_note_date is not None:
 		doc.custom_last_customer_delivery_note_date = custom_last_customer_delivery_note_date or None
 
+	final_payload_given = any(
+		v is not None
+		for v in (
+			transport_customer,
+			transport_customer_name,
+			transport_phone,
+			transport_email,
+			transport_address,
+		)
+	)
+	if final_payload_given:
+		from ultrafreight.ultra_freight.api.transport_dispatch import _resolve_standalone_transport_customer
+
+		resolved = _resolve_standalone_transport_customer(
+			transport_customer=transport_customer,
+			transport_customer_name=transport_customer_name,
+			transport_phone=transport_phone,
+			transport_email=transport_email,
+			transport_address=transport_address,
+		)
+		so_meta = frappe.get_meta("Sales Order")
+		for field, value in (resolved or {}).items():
+			if so_meta.has_field(field):
+				doc.set(field, value)
+		if dn_name and resolved:
+			dn_meta = frappe.get_meta("Delivery Note")
+			dn_updates = {k: v for k, v in resolved.items() if v is not None and dn_meta.has_field(k)}
+			if dn_updates:
+				if (
+					_normalize_delivery_status(
+						frappe.db.get_value("Delivery Note", dn_name, "delivery_status")
+					)
+					!= "Open"
+				):
+					frappe.throw(_("Final customer can only be changed while delivery status is Open"))
+				frappe.db.set_value("Delivery Note", dn_name, dn_updates, update_modified=True)
+
 	doc.flags.ignore_permissions = True
 	doc.calculate_taxes_and_totals()
 	doc.save()
 	return {
 		"name": doc.name,
 		"grand_total": doc.grand_total,
-		"custom_address_zone": doc.get("custom_address_zone"),
+		"custom_address_zone": get_order_zone(doc),
 		"rate": row.rate,
+		"transport_customer": doc.get("transport_customer"),
+		"transport_customer_name": doc.get("transport_customer_name"),
 	}
 
 
@@ -735,16 +1158,16 @@ def submit_transport_order(name: str, send_otp: int | None = None):
 	transport_customer = (
 		frappe.db.get_value("Delivery Note", dn_name, "transport_customer") if dn_name else None
 	)
+	from frappe.utils import cint
+
 	from ultrafreight.ultra_freight.api.transport_dispatch import (
 		get_transport_customer_send_otp,
 		get_zones_for_transport_customer,
 	)
-	from frappe.utils import cint
 
 	zones = get_zones_for_transport_customer(transport_customer)
-	if zones and frappe.get_meta("Sales Order").has_field("custom_address_zone"):
-		if not doc.get("custom_address_zone"):
-			frappe.throw(_("Select an address zone before approving this transport order"))
+	if zones and get_zone_fields() and not get_order_zone(doc):
+		frappe.throw(_("Select an address zone before approving this transport order"))
 
 	if send_otp is None:
 		send_otp = get_transport_customer_send_otp(transport_customer)
@@ -762,11 +1185,15 @@ MANAGER_DELIVERY_ROLES = ("Sales Manager", "System Manager", "Administrator", "M
 def _require_manager_delivery_role():
 	roles = set(frappe.get_roles(frappe.session.user))
 	if not roles.intersection(MANAGER_DELIVERY_ROLES):
-		frappe.throw(_("Only Sales Manager or System Manager can mark delivery as delivered"), frappe.PermissionError)
+		frappe.throw(
+			_("Only Sales Manager or System Manager can mark delivery as delivered"), frappe.PermissionError
+		)
 
 
 @frappe.whitelist()
-def mark_transport_order_delivered(name: str, completion_type: str = "Full", partial_reason: str | None = None):
+def mark_transport_order_delivered(
+	name: str, completion_type: str = "Full", partial_reason: str | None = None
+):
 	"""Mark In Transit delivery as Pending Invoicing (manager confirmation, no OTP)."""
 	_require_login()
 	_require_manager_delivery_role()
@@ -969,6 +1396,93 @@ def regenerate_transport_otp(name: str):
 	return result
 
 
+def _prepare_transport_order_for_invoice(sales_order: str):
+	"""Validate that a submitted transport order can be invoiced.
+
+	Returns the Sales Order document and the Delivery Note being transported.
+	"""
+	_ensure_transport_sales_order(sales_order)
+	doc = frappe.get_doc("Sales Order", sales_order)
+
+	if doc.docstatus != 1:
+		frappe.throw(_("Approve transport order {0} before creating an invoice").format(doc.name))
+
+	dn_name = doc.get("custom_delivery_note_to_be_transported")
+	if not dn_name:
+		frappe.throw(_("Delivery Note To Be Transported is required for {0}").format(doc.name))
+
+	_ensure_transport_delivery_note(dn_name)
+	dn_status = frappe.db.get_value("Delivery Note", dn_name, "delivery_status")
+	if dn_status != "Pending Invoicing":
+		frappe.throw(
+			_(
+				"Order {0}: invoice can only be created when delivery status is Pending Invoicing (current: {1})"
+			).format(doc.name, dn_status or "Open")
+		)
+
+	existing = frappe.db.get_value("Delivery Note", dn_name, "transport_sales_invoice")
+	if existing:
+		frappe.throw(
+			_("Transport invoice {0} already exists for delivery {1}").format(existing, dn_name)
+		)
+
+	return doc, dn_name
+
+
+def _complete_transport_delivery(sales_order: str, delivery_note: str, invoice_name: str):
+	"""Mark a transport delivery Completed and log the invoice confirmation."""
+	from ultrafreight.ultra_freight.api.notifications import create_confirmation_log
+
+	dn_values = (
+		frappe.db.get_value(
+			"Delivery Note", delivery_note, ["driver", "transport_customer"], as_dict=True
+		)
+		or {}
+	)
+
+	create_confirmation_log(
+		delivery_note_name=delivery_note,
+		sales_order_name=sales_order,
+		driver_name=dn_values.get("driver"),
+		transport_customer=dn_values.get("transport_customer"),
+		status="Completed",
+	)
+
+	frappe.db.set_value(
+		"Delivery Note",
+		delivery_note,
+		{
+			"delivery_status": "Completed",
+			"transport_sales_invoice": invoice_name,
+		},
+		update_modified=True,
+	)
+
+
+def _parse_transport_order_names(names) -> list[str]:
+	"""Normalise the orders argument coming from the portal (list, JSON string or single name)."""
+	if isinstance(names, str):
+		stripped = names.strip()
+		if stripped.startswith("["):
+			try:
+				names = frappe.parse_json(stripped)
+			except Exception:
+				names = []
+		else:
+			names = [stripped] if stripped else []
+	elif names is None:
+		names = []
+	elif not isinstance(names, (list, tuple)):
+		names = [names]
+
+	parsed = []
+	for name in names:
+		name = (name or "").strip() if isinstance(name, str) else ""
+		if name and name not in parsed:
+			parsed.append(name)
+	return parsed
+
+
 @frappe.whitelist()
 def create_transport_invoice(
 	name: str,
@@ -976,31 +1490,11 @@ def create_transport_invoice(
 	custom_final_customer_feedback_document: str | None = None,
 ):
 	"""Create transport Sales Invoice from a submitted transport order and mark delivery Completed."""
-	from ultrafreight.ultra_freight.api.notifications import create_confirmation_log
 	from ultrafreight.ultra_freight.api.transport_dispatch import create_transport_sales_invoice_from_order
 
 	_require_login()
-	_ensure_transport_sales_order(name)
-	doc = frappe.get_doc("Sales Order", name)
-	if doc.docstatus != 1:
-		frappe.throw(_("Approve the transport order before creating an invoice"))
 
-	dn_name = doc.get("custom_delivery_note_to_be_transported")
-	if not dn_name:
-		frappe.throw(_("Delivery Note To Be Transported is required"))
-
-	_ensure_transport_delivery_note(dn_name)
-	dn_status = frappe.db.get_value("Delivery Note", dn_name, "delivery_status")
-	if dn_status != "Pending Invoicing":
-		frappe.throw(
-			_("Invoice can only be created when delivery status is Pending Invoicing (current: {0})").format(
-				dn_status or "Open"
-			)
-		)
-
-	existing = frappe.db.get_value("Delivery Note", dn_name, "transport_sales_invoice")
-	if existing:
-		frappe.throw(_("Transport invoice {0} already exists for this delivery").format(existing))
+	_doc, dn_name = _prepare_transport_order_for_invoice(name)
 
 	so_updates = {}
 	if custom_note is not None:
@@ -1011,26 +1505,7 @@ def create_transport_invoice(
 		frappe.db.set_value("Sales Order", name, so_updates, update_modified=True)
 
 	invoice_name = create_transport_sales_invoice_from_order(name)
-	driver_name = frappe.db.get_value("Delivery Note", dn_name, "driver")
-	transport_customer = frappe.db.get_value("Delivery Note", dn_name, "transport_customer")
-
-	create_confirmation_log(
-		delivery_note_name=dn_name,
-		sales_order_name=name,
-		driver_name=driver_name,
-		transport_customer=transport_customer,
-		status="Completed",
-	)
-
-	frappe.db.set_value(
-		"Delivery Note",
-		dn_name,
-		{
-			"delivery_status": "Completed",
-			"transport_sales_invoice": invoice_name,
-		},
-		update_modified=True,
-	)
+	_complete_transport_delivery(name, dn_name, invoice_name)
 
 	return {
 		"name": name,
@@ -1041,11 +1516,86 @@ def create_transport_invoice(
 
 
 @frappe.whitelist()
+def create_combined_transport_invoice(
+	names: str | list[str] | None = None,
+	custom_note: str | None = None,
+	custom_final_customer_feedback_document: str | None = None,
+):
+	"""Combine one or more transport orders of the same customer into one Sales Invoice."""
+	from ultrafreight.ultra_freight.api.transport_dispatch import (
+		create_combined_transport_sales_invoice_from_orders,
+	)
+
+	_require_login()
+
+	order_names = _parse_transport_order_names(names)
+	if not order_names:
+		frappe.throw(_("Select at least one transport order"))
+
+	prepared = [_prepare_transport_order_for_invoice(order_name) for order_name in order_names]
+	first_doc = prepared[0][0]
+
+	for doc, _delivery_note in prepared[1:]:
+		if doc.customer != first_doc.customer:
+			frappe.throw(
+				_(
+					"Only orders for the same customer can be combined into one invoice. "
+					"{0} is for {1}, {2} is for {3}"
+				).format(
+					first_doc.name,
+					first_doc.customer_name or first_doc.customer,
+					doc.name,
+					doc.customer_name or doc.customer,
+				)
+			)
+		if (doc.company or "") != (first_doc.company or ""):
+			frappe.throw(
+				_("Orders {0} and {1} belong to different companies and cannot be combined").format(
+					first_doc.name, doc.name
+				)
+			)
+		if (doc.currency or "") != (first_doc.currency or ""):
+			frappe.throw(
+				_("Orders {0} and {1} use different currencies and cannot be combined").format(
+					first_doc.name, doc.name
+				)
+			)
+
+	so_updates = {}
+	if custom_note is not None:
+		so_updates["custom_note"] = custom_note
+	if custom_final_customer_feedback_document is not None:
+		so_updates["custom_final_customer_feedback_document"] = custom_final_customer_feedback_document
+	if so_updates:
+		for doc, _delivery_note in prepared:
+			frappe.db.set_value("Sales Order", doc.name, so_updates, update_modified=True)
+
+	invoice_name = create_combined_transport_sales_invoice_from_orders(order_names)
+
+	orders = []
+	for doc, dn_name in prepared:
+		_complete_transport_delivery(doc.name, dn_name, invoice_name)
+		orders.append({"sales_order": doc.name, "delivery_note": dn_name})
+
+	invoice = frappe.db.get_value(
+		"Sales Invoice", invoice_name, ["grand_total", "currency"], as_dict=True
+	) or frappe._dict()
+
+	return {
+		"sales_invoice": invoice_name,
+		"grand_total": invoice.grand_total,
+		"currency": invoice.currency,
+		"delivery_status": "Completed",
+		"orders": orders,
+	}
+
+
+@frappe.whitelist()
 def assign_dispatch_driver(delivery_note: str, driver: str, vehicle_no: str | None = None):
 	_require_login()
 	_ensure_transport_delivery_note(delivery_note)
 	doc = frappe.get_doc("Delivery Note", delivery_note)
-	if doc.delivery_status not in ("Open", "", None):
+	if _normalize_delivery_status(doc.delivery_status) != "Open":
 		frappe.throw(_("Driver can only be changed while delivery status is Open"))
 	_ensure_driver_access(driver)
 	if frappe.db.get_value("Driver", driver, "status") != "Active":
@@ -1080,6 +1630,9 @@ def get_vehicles():
 	meta = frappe.get_meta("Vehicle")
 	if meta.has_field("company"):
 		fields.append("company")
+	for optional in ("fuel_type", "uom", "last_odometer", "color", "location", "chassis_no"):
+		if meta.has_field(optional):
+			fields.append(optional)
 
 	rows = frappe.get_all(
 		"Vehicle",
@@ -1100,30 +1653,190 @@ def get_vehicles():
 
 
 @frappe.whitelist()
+def create_vehicle(
+	license_plate: str,
+	make: str,
+	model: str,
+	fuel_type: str | None = None,
+	uom: str | None = None,
+	last_odometer: int | float | str | None = 0,
+	color: str | None = None,
+	location: str | None = None,
+	chassis_no: str | None = None,
+):
+	"""Create a truck/vehicle (ERPNext Vehicle) for the transport company."""
+	_require_settings_admin()
+	if not frappe.db.exists("DocType", "Vehicle"):
+		frappe.throw(_("Vehicle DocType is not available on this site"))
+
+	license_plate = (license_plate or "").strip().upper()
+	make = (make or "").strip()
+	model = (model or "").strip()
+	if not license_plate or not make or not model:
+		frappe.throw(_("License plate, make, and model are required"))
+	if frappe.db.exists("Vehicle", license_plate):
+		frappe.throw(_("Truck {0} already exists").format(license_plate))
+
+	fuel_type = (fuel_type or "Diesel").strip()
+	if fuel_type not in ("Petrol", "Diesel", "Natural Gas", "Electric"):
+		frappe.throw(_("Invalid fuel type"))
+
+	fuel_uom = (uom or "").strip() or _default_vehicle_fuel_uom()
+	if not fuel_uom or not frappe.db.exists("UOM", fuel_uom):
+		frappe.throw(_("Fuel UOM is required. Create a UOM such as Litre first."))
+
+	payload = {
+		"doctype": "Vehicle",
+		"license_plate": license_plate,
+		"make": make,
+		"model": model,
+		"last_odometer": cint(last_odometer or 0),
+		"fuel_type": fuel_type,
+		"uom": fuel_uom,
+	}
+	meta = frappe.get_meta("Vehicle")
+	company = _transport_company()
+	if company and meta.has_field("company"):
+		payload["company"] = company
+	if color and meta.has_field("color"):
+		payload["color"] = (color or "").strip() or None
+	if location and meta.has_field("location"):
+		payload["location"] = (location or "").strip() or None
+	if chassis_no and meta.has_field("chassis_no"):
+		payload["chassis_no"] = (chassis_no or "").strip() or None
+
+	doc = frappe.get_doc(payload)
+	doc.flags.ignore_permissions = True
+	doc.insert(ignore_permissions=True)
+	return _serialize_vehicle(doc)
+
+
+@frappe.whitelist()
+def update_vehicle(
+	name: str,
+	make: str | None = None,
+	model: str | None = None,
+	fuel_type: str | None = None,
+	uom: str | None = None,
+	color: str | None = None,
+	location: str | None = None,
+	chassis_no: str | None = None,
+):
+	_require_settings_admin()
+	if not frappe.db.exists("DocType", "Vehicle"):
+		frappe.throw(_("Vehicle DocType is not available on this site"))
+	name = (name or "").strip()
+	if not name or not frappe.db.exists("Vehicle", name):
+		frappe.throw(_("Truck not found"))
+
+	doc = frappe.get_doc("Vehicle", name)
+	if make is not None:
+		doc.make = (make or "").strip()
+	if model is not None:
+		doc.model = (model or "").strip()
+	if fuel_type is not None:
+		fuel_type = (fuel_type or "").strip()
+		if fuel_type not in ("Petrol", "Diesel", "Natural Gas", "Electric"):
+			frappe.throw(_("Invalid fuel type"))
+		doc.fuel_type = fuel_type
+	if uom is not None and (uom or "").strip():
+		if not frappe.db.exists("UOM", uom.strip()):
+			frappe.throw(_("Fuel UOM {0} was not found").format(uom))
+		doc.uom = uom.strip()
+	if color is not None and doc.meta.has_field("color"):
+		doc.color = (color or "").strip() or None
+	if location is not None and doc.meta.has_field("location"):
+		doc.location = (location or "").strip() or None
+	if chassis_no is not None and doc.meta.has_field("chassis_no"):
+		doc.chassis_no = (chassis_no or "").strip() or None
+	if not doc.make or not doc.model:
+		frappe.throw(_("Make and model are required"))
+
+	doc.flags.ignore_permissions = True
+	doc.save(ignore_permissions=True)
+	return _serialize_vehicle(doc)
+
+
+@frappe.whitelist()
+def delete_vehicle(name: str):
+	_require_settings_admin()
+	if not frappe.db.exists("DocType", "Vehicle"):
+		frappe.throw(_("Vehicle DocType is not available on this site"))
+	name = (name or "").strip()
+	if not name or not frappe.db.exists("Vehicle", name):
+		frappe.throw(_("Truck not found"))
+
+	# Delivery Note.vehicle_no is typically the license plate / Vehicle name
+	if frappe.db.exists("Delivery Note", {"vehicle_no": name}):
+		frappe.throw(_("Cannot delete {0} — it is linked to Delivery Notes").format(name))
+	if frappe.db.exists("Driver", {"vehicle_number": name}):
+		frappe.throw(_("Cannot delete {0} — it is assigned on Drivers").format(name))
+
+	frappe.delete_doc("Vehicle", name, ignore_permissions=True)
+	return {"ok": 1, "name": name}
+
+
+def _default_vehicle_fuel_uom() -> str:
+	for candidate in ("Litre", "Liter", "L", "Nos"):
+		if frappe.db.exists("UOM", candidate):
+			return candidate
+	return frappe.db.get_value("UOM", {}, "name") or ""
+
+
+def _serialize_vehicle(doc) -> dict:
+	row = {
+		"name": doc.name,
+		"license_plate": doc.license_plate,
+		"make": doc.make,
+		"model": doc.model,
+		"fuel_type": getattr(doc, "fuel_type", None),
+		"uom": getattr(doc, "uom", None),
+		"last_odometer": getattr(doc, "last_odometer", None),
+		"color": getattr(doc, "color", None),
+		"location": getattr(doc, "location", None),
+		"chassis_no": getattr(doc, "chassis_no", None),
+	}
+	if doc.meta.has_field("company"):
+		row["company"] = doc.company
+	return row
+
+
+@frappe.whitelist()
 def update_dispatch_transport_customer(
 	delivery_note: str,
 	transport_customer_name: str | None = None,
 	transport_phone: str | None = None,
 	transport_email: str | None = None,
 	transport_address: str | None = None,
+	transport_customer: str | None = None,
 ):
 	_require_login()
 	_ensure_transport_delivery_note(delivery_note)
 	doc = frappe.get_doc("Delivery Note", delivery_note)
-	if doc.delivery_status not in ("Open", "", None):
+	if _normalize_delivery_status(doc.delivery_status) != "Open":
 		frappe.throw(_("Transport customer details can only be edited while delivery status is Open"))
 
-	updates = {}
-	if transport_customer_name is not None:
-		updates["transport_customer_name"] = transport_customer_name
-	if transport_phone is not None:
-		updates["transport_phone"] = transport_phone
-	if transport_email is not None:
-		updates["transport_email"] = transport_email
-	if transport_address is not None:
-		updates["transport_address"] = transport_address
+	from ultrafreight.ultra_freight.api.transport_dispatch import _resolve_standalone_transport_customer
+
+	resolved = _resolve_standalone_transport_customer(
+		transport_customer=transport_customer,
+		transport_customer_name=transport_customer_name
+		if transport_customer_name is not None
+		else doc.transport_customer_name,
+		transport_phone=transport_phone if transport_phone is not None else doc.transport_phone,
+		transport_email=transport_email if transport_email is not None else doc.transport_email,
+		transport_address=transport_address if transport_address is not None else doc.transport_address,
+	)
+	updates = {k: v for k, v in (resolved or {}).items() if v is not None}
 	if updates:
 		frappe.db.set_value("Delivery Note", delivery_note, updates, update_modified=True)
+		# Keep linked transport SO in sync when fields exist there
+		so_name = doc.get("transport_sales_order")
+		if so_name and frappe.db.exists("Sales Order", so_name):
+			so_meta = frappe.get_meta("Sales Order")
+			so_updates = {k: v for k, v in updates.items() if so_meta.has_field(k)}
+			if so_updates:
+				frappe.db.set_value("Sales Order", so_name, so_updates, update_modified=False)
 	return {"delivery_note": delivery_note, **updates}
 
 
@@ -1137,7 +1850,7 @@ def get_drivers(include_inactive: int | str = 0):
 	if company:
 		filters["transport_company"] = company
 
-	return frappe.get_all(
+	rows = frappe.get_all(
 		"Driver",
 		filters=filters,
 		fields=[
@@ -1151,6 +1864,23 @@ def get_drivers(include_inactive: int | str = 0):
 		],
 		order_by="full_name asc",
 	)
+	if company and filters.get("transport_company") and not rows:
+		fallback_filters = {"status": "Active"} if not int(include_inactive) else {}
+		rows = frappe.get_all(
+			"Driver",
+			filters=fallback_filters,
+			fields=[
+				"name",
+				"full_name",
+				"cell_number",
+				"vehicle_number",
+				"transport_company",
+				"unique_key",
+				"status",
+			],
+			order_by="full_name asc",
+		)
+	return rows
 
 
 @frappe.whitelist()
@@ -1501,3 +2231,539 @@ def get_sms_logs(delivery_note: str | None = None):
 		order_by="creation desc",
 		limit=200,
 	)
+
+
+@frappe.whitelist()
+def get_email_logs(delivery_note: str | None = None):
+	_require_login()
+	if delivery_note:
+		if not frappe.db.exists("Delivery Note", delivery_note):
+			return []
+		if delivery_note not in _get_linked_delivery_notes():
+			if not frappe.has_permission("Delivery Note", "read", delivery_note):
+				frappe.throw(_("This delivery note is not linked to your transport company"))
+			return get_delivery_email_logs(delivery_note)
+		return get_delivery_email_logs(delivery_note)
+
+	dn_names = _get_linked_delivery_notes()
+	if not dn_names:
+		return []
+
+	if not frappe.db.exists("DocType", "Delivery Email Log"):
+		return []
+
+	return frappe.get_all(
+		"Delivery Email Log",
+		filters={"delivery_note": ("in", dn_names)},
+		fields=[
+			"name",
+			"delivery_note",
+			"party",
+			"event",
+			"recipient",
+			"recipient_label",
+			"subject",
+			"message",
+			"status",
+			"sent_at",
+			"error",
+			"creation",
+		],
+		order_by="creation desc",
+		limit=200,
+	)
+
+
+SETTINGS_ADMIN_ROLES = ("System Manager", "Administrator")
+
+SETTINGS_EDITABLE_FIELDS = (
+	"otp_expiry_minutes",
+	"ultra_transport_company",
+	"ultra_transport_email",
+	"default_transport_item",
+	"default_sales_taxes_template",
+	"default_transport_charges",
+	"default_country_code",
+	"branch",
+	"cost_center",
+	"default_print_format",
+	"default_letter_head",
+	"enable_email",
+	"create_transport_order_on_dnote_submission",
+	"delivery_note_workflow_action_to_create_order",
+	"enable_sms",
+	"sms_provider",
+	"sms_sender_id",
+	"sms_api_url",
+)
+
+SETTINGS_LINK_SEARCH = {
+	"Company": ["name"],
+	"Item": ["name", "item_name"],
+	"Sales Taxes and Charges Template": ["name"],
+	"Branch": ["name"],
+	"Cost Center": ["name", "cost_center_name"],
+	"Print Format": ["name"],
+	"Letter Head": ["name"],
+	"Workflow Action Master": ["name"],
+}
+
+
+def _require_settings_admin():
+	_require_login()
+	roles = set(frappe.get_roles(frappe.session.user))
+	if frappe.session.user == "Administrator":
+		return
+	if not roles.intersection(SETTINGS_ADMIN_ROLES):
+		frappe.throw(
+			_("Only System Manager or Administrator can manage Transport Settings"),
+			frappe.PermissionError,
+		)
+
+
+@frappe.whitelist()
+def get_portal_transport_settings():
+	"""Full Transport Settings for Master UI (admin only)."""
+	_require_settings_admin()
+	doc = frappe.get_single("Transport Settings")
+	data = {field: doc.get(field) for field in SETTINGS_EDITABLE_FIELDS}
+	data["sms_api_key_set"] = bool(
+		doc.get_password("sms_api_key", raise_exception=False) if doc.meta.has_field("sms_api_key") else False
+	)
+	# Never return the raw password to the client
+	data["sms_api_key"] = ""
+	return data
+
+
+@frappe.whitelist()
+def update_portal_transport_settings(**kwargs):
+	"""Update Transport Settings from Master UI (admin only)."""
+	_require_settings_admin()
+	doc = frappe.get_single("Transport Settings")
+
+	for field in SETTINGS_EDITABLE_FIELDS:
+		if field not in kwargs:
+			continue
+		value = kwargs.get(field)
+		df = doc.meta.get_field(field)
+		if not df:
+			continue
+		if df.fieldtype == "Check":
+			doc.set(field, 1 if cint(value) else 0)
+		elif df.fieldtype in ("Int",):
+			doc.set(field, cint(value) if value not in (None, "") else 0)
+		elif df.fieldtype in ("Currency", "Float"):
+			doc.set(field, flt(value) if value not in (None, "") else 0)
+		else:
+			doc.set(field, (value or "").strip() or None)
+
+	# Only overwrite SMS API key when a new value is provided
+	sms_api_key = kwargs.get("sms_api_key")
+	if sms_api_key is not None and str(sms_api_key).strip():
+		doc.sms_api_key = str(sms_api_key).strip()
+
+	doc.flags.ignore_permissions = True
+	doc.save()
+	frappe.clear_cache(doctype="Transport Settings")
+	return get_portal_transport_settings()
+
+
+@frappe.whitelist()
+def search_settings_link_options(doctype: str, search: str = "", limit: int = 20):
+	"""Link options for Transport Settings fields (admin only)."""
+	_require_settings_admin()
+	doctype = (doctype or "").strip()
+	if doctype not in SETTINGS_LINK_SEARCH:
+		frappe.throw(_("Unsupported link doctype: {0}").format(doctype))
+	if not frappe.db.exists("DocType", doctype):
+		return []
+
+	limit = max(1, min(int(limit or 20), 50))
+	search = (search or "").strip()
+	fields = ["name"]
+	meta = frappe.get_meta(doctype)
+	for field in SETTINGS_LINK_SEARCH[doctype]:
+		if field != "name" and meta.has_field(field):
+			fields.append(field)
+
+	filters = {}
+	if doctype == "Item" and meta.has_field("disabled"):
+		filters["disabled"] = 0
+	if doctype == "Cost Center" and meta.has_field("disabled"):
+		filters["disabled"] = 0
+	if doctype == "Print Format" and meta.has_field("doc_type"):
+		# Prefer Sales Order / Sales Invoice formats but allow blank search across all
+		pass
+
+	if len(search) >= 1:
+		or_filters = [[f, "like", f"%{search}%"] for f in fields]
+		rows = frappe.get_all(
+			doctype,
+			filters=filters or None,
+			or_filters=or_filters,
+			fields=fields,
+			order_by="modified desc",
+			limit=limit,
+		)
+	else:
+		rows = frappe.get_all(
+			doctype,
+			filters=filters or None,
+			fields=fields,
+			order_by="modified desc",
+			limit=limit,
+		)
+
+	result = []
+	for row in rows:
+		label_parts = [row.name]
+		for field in fields:
+			if field != "name" and row.get(field):
+				label_parts.append(str(row.get(field)))
+		result.append({"name": row.name, "label": " · ".join(dict.fromkeys(label_parts))})
+	return result
+
+
+def _parse_zones_payload(zones):
+	"""Accept list/JSON string of zone rows for Transport Customer child table."""
+	if zones is None or zones == "":
+		return None
+	if isinstance(zones, str):
+		zones = frappe.parse_json(zones)
+	if not isinstance(zones, (list, tuple)):
+		frappe.throw(_("Zones must be a list"))
+	rows = []
+	seen_default = False
+	for idx, row in enumerate(zones):
+		if not isinstance(row, dict):
+			continue
+		zone = (row.get("zone") or "").strip()
+		if not zone:
+			continue
+		if not frappe.db.exists("Address Zone", zone):
+			frappe.throw(_("Address Zone {0} was not found").format(zone))
+		is_default = 1 if cint(row.get("default")) else 0
+		if is_default:
+			if seen_default:
+				is_default = 0
+			else:
+				seen_default = True
+		city = (row.get("city") or "").strip() or frappe.db.get_value("Address Zone", zone, "zone_city")
+		charges = row.get("transport_charges")
+		if charges in (None, ""):
+			charges = frappe.db.get_value("Address Zone", zone, "transport_charges")
+		rows.append(
+			{
+				"zone": zone,
+				"city": city,
+				"transport_charges": flt(charges),
+				"default": is_default,
+				"more_information": row.get("more_information") or "",
+				"idx": idx + 1,
+			}
+		)
+	return rows
+
+
+def _serialize_transport_customer(doc) -> dict:
+	from ultrafreight.ultra_freight.api.transport_dispatch import get_zones_for_transport_customer
+
+	return {
+		"name": doc.name,
+		"customer_name": doc.customer_name,
+		"phone_number": doc.phone_number,
+		"email": doc.email,
+		"contact_person": doc.contact_person,
+		"contact_phone": doc.contact_phone,
+		"send_otp": cint(doc.send_otp),
+		"delivery_address": doc.delivery_address,
+		"city": doc.city,
+		"state": doc.state,
+		"postal_code": doc.postal_code,
+		"country": doc.country,
+		"notes": doc.notes,
+		"zones": get_zones_for_transport_customer(doc.name),
+	}
+
+
+@frappe.whitelist()
+def list_master_transport_customers(search: str = "", limit: int = 100):
+	_require_settings_admin()
+	limit = max(1, min(int(limit or 100), 200))
+	search = (search or "").strip()
+	fields = [
+		"name",
+		"customer_name",
+		"phone_number",
+		"email",
+		"city",
+		"send_otp",
+		"modified",
+	]
+	if len(search) >= 1:
+		rows = frappe.get_all(
+			"Transport Customer",
+			or_filters=[
+				["name", "like", f"%{search}%"],
+				["customer_name", "like", f"%{search}%"],
+				["phone_number", "like", f"%{search}%"],
+				["email", "like", f"%{search}%"],
+			],
+			fields=fields,
+			order_by="modified desc",
+			limit=limit,
+		)
+	else:
+		rows = frappe.get_all(
+			"Transport Customer",
+			fields=fields,
+			order_by="modified desc",
+			limit=limit,
+		)
+	from ultrafreight.ultra_freight.api.transport_dispatch import get_zones_for_transport_customer
+
+	for row in rows:
+		zones = get_zones_for_transport_customer(row.name)
+		row["zone_count"] = len(zones)
+		row["default_zone"] = next((z.zone for z in zones if cint(z.get("default"))), None) or (
+			zones[0].zone if zones else None
+		)
+	return rows
+
+
+@frappe.whitelist()
+def get_master_transport_customer(name: str):
+	_require_settings_admin()
+	if not name or not frappe.db.exists("Transport Customer", name):
+		frappe.throw(_("Transport Customer not found"))
+	return _serialize_transport_customer(frappe.get_doc("Transport Customer", name))
+
+
+@frappe.whitelist()
+def create_master_transport_customer(
+	customer_name: str,
+	phone_number: str,
+	email: str | None = None,
+	contact_person: str | None = None,
+	contact_phone: str | None = None,
+	send_otp: int | str = 1,
+	delivery_address: str | None = None,
+	city: str | None = None,
+	state: str | None = None,
+	postal_code: str | None = None,
+	country: str | None = None,
+	notes: str | None = None,
+	zones=None,
+):
+	_require_settings_admin()
+	customer_name = (customer_name or "").strip()
+	phone_number = (phone_number or "").strip()
+	if not customer_name or not phone_number:
+		frappe.throw(_("Customer name and phone are required"))
+
+	doc = frappe.get_doc(
+		{
+			"doctype": "Transport Customer",
+			"customer_name": customer_name,
+			"phone_number": phone_number,
+			"email": (email or "").strip() or None,
+			"contact_person": (contact_person or "").strip() or None,
+			"contact_phone": (contact_phone or "").strip() or None,
+			"send_otp": 1 if cint(send_otp) else 0,
+			"delivery_address": (delivery_address or "").strip() or None,
+			"city": (city or "").strip() or None,
+			"state": (state or "").strip() or None,
+			"postal_code": (postal_code or "").strip() or None,
+			"country": (country or "").strip() or None,
+			"notes": (notes or "").strip() or None,
+		}
+	)
+	zone_rows = _parse_zones_payload(zones)
+	if zone_rows:
+		for row in zone_rows:
+			doc.append("zones", row)
+	doc.insert(ignore_permissions=True)
+	return _serialize_transport_customer(doc)
+
+
+@frappe.whitelist()
+def update_master_transport_customer(
+	name: str,
+	customer_name: str | None = None,
+	phone_number: str | None = None,
+	email: str | None = None,
+	contact_person: str | None = None,
+	contact_phone: str | None = None,
+	send_otp: int | str | None = None,
+	delivery_address: str | None = None,
+	city: str | None = None,
+	state: str | None = None,
+	postal_code: str | None = None,
+	country: str | None = None,
+	notes: str | None = None,
+	zones=None,
+):
+	_require_settings_admin()
+	if not name or not frappe.db.exists("Transport Customer", name):
+		frappe.throw(_("Transport Customer not found"))
+	doc = frappe.get_doc("Transport Customer", name)
+
+	if customer_name is not None:
+		doc.customer_name = (customer_name or "").strip()
+	if phone_number is not None:
+		doc.phone_number = (phone_number or "").strip()
+	if email is not None:
+		doc.email = (email or "").strip() or None
+	if contact_person is not None:
+		doc.contact_person = (contact_person or "").strip() or None
+	if contact_phone is not None:
+		doc.contact_phone = (contact_phone or "").strip() or None
+	if send_otp is not None:
+		doc.send_otp = 1 if cint(send_otp) else 0
+	if delivery_address is not None:
+		doc.delivery_address = (delivery_address or "").strip() or None
+	if city is not None:
+		doc.city = (city or "").strip() or None
+	if state is not None:
+		doc.state = (state or "").strip() or None
+	if postal_code is not None:
+		doc.postal_code = (postal_code or "").strip() or None
+	if country is not None:
+		doc.country = (country or "").strip() or None
+	if notes is not None:
+		doc.notes = (notes or "").strip() or None
+
+	if not doc.customer_name or not doc.phone_number:
+		frappe.throw(_("Customer name and phone are required"))
+
+	zone_rows = _parse_zones_payload(zones)
+	if zone_rows is not None:
+		doc.set("zones", [])
+		for row in zone_rows:
+			doc.append("zones", row)
+
+	doc.flags.ignore_permissions = True
+	doc.save()
+	return _serialize_transport_customer(doc)
+
+
+@frappe.whitelist()
+def delete_master_transport_customer(name: str):
+	_require_settings_admin()
+	name = (name or "").strip()
+	if not name or not frappe.db.exists("Transport Customer", name):
+		frappe.throw(_("Transport Customer not found"))
+
+	if frappe.db.exists("Sales Order", {"transport_customer": name}):
+		frappe.throw(_("Cannot delete {0} — it is linked to Sales Orders").format(name))
+	if frappe.db.exists("Delivery Note", {"transport_customer": name}):
+		frappe.throw(_("Cannot delete {0} — it is linked to Delivery Notes").format(name))
+	if frappe.db.exists("Delivery Confirmation Log", {"transport_customer": name}):
+		frappe.throw(_("Cannot delete {0} — it has delivery confirmation logs").format(name))
+
+	frappe.delete_doc("Transport Customer", name, ignore_permissions=True)
+	return {"ok": 1, "name": name}
+
+
+@frappe.whitelist()
+def list_master_address_zones(search: str = "", limit: int = 100):
+	_require_settings_admin()
+	limit = max(1, min(int(limit or 100), 200))
+	search = (search or "").strip()
+	fields = ["name", "zone_name", "zone_city", "transport_charges", "more_information", "modified"]
+	if len(search) >= 1:
+		return frappe.get_all(
+			"Address Zone",
+			or_filters=[
+				["name", "like", f"%{search}%"],
+				["zone_name", "like", f"%{search}%"],
+				["zone_city", "like", f"%{search}%"],
+			],
+			fields=fields,
+			order_by="modified desc",
+			limit=limit,
+		)
+	return frappe.get_all(
+		"Address Zone",
+		fields=fields,
+		order_by="modified desc",
+		limit=limit,
+	)
+
+
+@frappe.whitelist()
+def create_master_address_zone(
+	zone_name: str,
+	zone_city: str | None = None,
+	transport_charges: float | None = None,
+	more_information: str | None = None,
+):
+	_require_settings_admin()
+	zone_name = (zone_name or "").strip()
+	if not zone_name:
+		frappe.throw(_("Zone name is required"))
+	if frappe.db.exists("Address Zone", zone_name):
+		frappe.throw(_("Address Zone {0} already exists").format(zone_name))
+
+	doc = frappe.get_doc(
+		{
+			"doctype": "Address Zone",
+			"zone_name": zone_name,
+			"zone_city": (zone_city or "").strip() or None,
+			"transport_charges": flt(transport_charges),
+			"more_information": more_information or None,
+		}
+	)
+	doc.insert(ignore_permissions=True)
+	return {
+		"name": doc.name,
+		"zone_name": doc.zone_name,
+		"zone_city": doc.zone_city,
+		"transport_charges": doc.transport_charges,
+		"more_information": doc.more_information,
+	}
+
+
+@frappe.whitelist()
+def update_master_address_zone(
+	name: str,
+	zone_city: str | None = None,
+	transport_charges: float | None = None,
+	more_information: str | None = None,
+):
+	_require_settings_admin()
+	if not name or not frappe.db.exists("Address Zone", name):
+		frappe.throw(_("Address Zone not found"))
+	doc = frappe.get_doc("Address Zone", name)
+	if zone_city is not None:
+		doc.zone_city = (zone_city or "").strip() or None
+	if transport_charges is not None:
+		doc.transport_charges = flt(transport_charges)
+	if more_information is not None:
+		doc.more_information = more_information or None
+	doc.flags.ignore_permissions = True
+	doc.save()
+	return {
+		"name": doc.name,
+		"zone_name": doc.zone_name,
+		"zone_city": doc.zone_city,
+		"transport_charges": doc.transport_charges,
+		"more_information": doc.more_information,
+	}
+
+
+@frappe.whitelist()
+def delete_master_address_zone(name: str):
+	_require_settings_admin()
+	name = (name or "").strip()
+	if not name or not frappe.db.exists("Address Zone", name):
+		frappe.throw(_("Address Zone not found"))
+
+	in_use = frappe.db.count("Address Zone Detail", {"zone": name})
+	if in_use:
+		frappe.throw(
+			_("Cannot delete {0} — it is assigned on {1} transport customer zone row(s)").format(name, in_use)
+		)
+
+	frappe.delete_doc("Address Zone", name, ignore_permissions=True)
+	return {"ok": 1, "name": name}

@@ -3,6 +3,8 @@
 
 frappe.ui.form.on("Transport Settings", {
 	refresh(frm) {
-		frm.set_intro(__("Configure OTP, SMS, and transport billing defaults for Ultra Dispatch."));
+		frm.set_intro(
+			__("Configure OTP, SMS, and transport billing defaults for Ultra Dispatch.")
+		);
 	},
 });

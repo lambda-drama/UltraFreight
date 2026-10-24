@@ -23,8 +23,18 @@ import {
 } from '@/components/ui/primitives'
 import { Loader2, Plus, RefreshCw, ExternalLink, Copy } from 'lucide-react'
 import { DRIVER_PORTAL_PATH, getDriverPortalUrl } from '@/lib/driver-portal'
+import { ListExportActions } from '@/components/ui/list-export-actions'
+import type { ListExportColumn } from '@/lib/list-export'
 
 const emptyForm = { full_name: '', cell_number: '', vehicle_number: '', status: 'Active' }
+
+const EXPORT_COLUMNS: ListExportColumn[] = [
+  { key: 'full_name', label: 'Name' },
+  { key: 'cell_number', label: 'Phone' },
+  { key: 'vehicle_number', label: 'Vehicle' },
+  { key: 'unique_key', label: 'PIN' },
+  { key: 'status', label: 'Status' },
+]
 
 export default function DriversPage() {
   const [showInactive, setShowInactive] = useState(false)
@@ -113,7 +123,12 @@ export default function DriversPage() {
         title="Drivers"
         description="Add, edit, and manage drivers for your transport company"
         action={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <ListExportActions
+              title="Drivers"
+              columns={EXPORT_COLUMNS}
+              rows={(data || []) as unknown as Record<string, unknown>[]}
+            />
             <Button variant="outline" onClick={() => copyDriverPortalLink()}>
               <Copy className="mr-2 h-4 w-4" />
               Copy Driver Portal Link

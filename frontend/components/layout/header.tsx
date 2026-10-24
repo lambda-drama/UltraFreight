@@ -16,6 +16,12 @@ const VIEW_TITLES: Record<string, string> = {
   invoices: 'Invoices',
   'confirmation-logs': 'Confirmation Logs',
   'sms-logs': 'SMS Log',
+  'email-logs': 'Email Log',
+  'transport-settings': 'Transport Settings',
+  'transport-customers': 'Transport Customers',
+  'master-drivers': 'Drivers',
+  'master-trucks': 'Trucks',
+  'address-zones': 'Zones',
 }
 
 export function Header({ onMenuClick }: { onMenuClick?: () => void }) {
