@@ -8,6 +8,11 @@ from ultrafreight.ultra_freight.utils.delivery_status import (
 from ultrafreight.ultra_freight.utils.email_log import get_delivery_email_logs
 from ultrafreight.ultra_freight.utils.sms_log import get_delivery_sms_logs
 from ultrafreight.ultra_freight.utils.transport_settings import get_transport_settings
+from ultrafreight.ultra_freight.utils.zone_field import (
+	get_order_zone,
+	get_zone_fields,
+	set_order_zone,
+)
 
 
 def _require_login():
@@ -868,8 +873,9 @@ def get_transport_orders(docstatus: str | None = None):
 		"custom_reason_for_reschedule",
 	]
 	so_meta = frappe.get_meta("Sales Order")
-	if so_meta.has_field("custom_address_zone"):
-		fields.append("custom_address_zone")
+	for zone_field in get_zone_fields():
+		if zone_field not in fields:
+			fields.append(zone_field)
 	for field in (
 		"transport_customer",
 		"transport_customer_name",
@@ -895,6 +901,9 @@ def get_transport_orders(docstatus: str | None = None):
 	)
 
 	for order in orders:
+		# The portal frontend only knows ``custom_address_zone`` while older
+		# sites keep the zone in ``custom_zone_``; always expose the same key.
+		order["custom_address_zone"] = get_order_zone(order)
 		order["items"] = frappe.get_all(
 			"Sales Order Item",
 			filters={"parent": order.name},
@@ -972,6 +981,7 @@ def get_transport_order(name: str):
 		"docstatus": doc.docstatus,
 		"grand_total": doc.grand_total,
 		"currency": doc.currency,
+		"custom_address_zone": get_order_zone(doc),
 		"custom_delivery_note_to_be_transported": doc.custom_delivery_note_to_be_transported,
 		"items": [
 			{
@@ -1024,21 +1034,21 @@ def update_transport_order(
 		else doc.get("transport_customer")
 	)
 
-	if custom_address_zone is not None and frappe.get_meta("Sales Order").has_field("custom_address_zone"):
-		if custom_address_zone and transport_customer_link:
+	if custom_address_zone is not None and get_zone_fields():
+		zone = (custom_address_zone or "").strip() or None
+		if zone and transport_customer_link:
 			valid = frappe.db.exists(
 				"Address Zone Detail",
 				{
 					"parent": transport_customer_link,
 					"parenttype": "Transport Customer",
-					"zone": custom_address_zone,
+					"zone": zone,
 				},
 			)
 			if not valid:
 				frappe.throw(_("Selected address zone is not linked to this transport customer"))
-		doc.custom_address_zone = custom_address_zone or None
+		set_order_zone(doc, zone)
 		from ultrafreight.ultra_freight.api.transport_dispatch import resolve_transport_charge
-		from ultrafreight.ultra_freight.utils.transport_settings import get_transport_settings
 
 		goods_so = None
 		if dn_name:
@@ -1054,7 +1064,7 @@ def update_transport_order(
 			goods_so = goods_so[0][0] if goods_so else None
 		row.rate = resolve_transport_charge(
 			settings=get_transport_settings(),
-			address_zone=doc.custom_address_zone,
+			address_zone=zone,
 			transport_customer=transport_customer_link,
 			goods_sales_order_name=goods_so,
 		)
@@ -1126,7 +1136,7 @@ def update_transport_order(
 	return {
 		"name": doc.name,
 		"grand_total": doc.grand_total,
-		"custom_address_zone": doc.get("custom_address_zone"),
+		"custom_address_zone": get_order_zone(doc),
 		"rate": row.rate,
 		"transport_customer": doc.get("transport_customer"),
 		"transport_customer_name": doc.get("transport_customer_name"),
@@ -1156,9 +1166,8 @@ def submit_transport_order(name: str, send_otp: int | None = None):
 	)
 
 	zones = get_zones_for_transport_customer(transport_customer)
-	if zones and frappe.get_meta("Sales Order").has_field("custom_address_zone"):
-		if not doc.get("custom_address_zone"):
-			frappe.throw(_("Select an address zone before approving this transport order"))
+	if zones and get_zone_fields() and not get_order_zone(doc):
+		frappe.throw(_("Select an address zone before approving this transport order"))
 
 	if send_otp is None:
 		send_otp = get_transport_customer_send_otp(transport_customer)
@@ -1387,6 +1396,93 @@ def regenerate_transport_otp(name: str):
 	return result
 
 
+def _prepare_transport_order_for_invoice(sales_order: str):
+	"""Validate that a submitted transport order can be invoiced.
+
+	Returns the Sales Order document and the Delivery Note being transported.
+	"""
+	_ensure_transport_sales_order(sales_order)
+	doc = frappe.get_doc("Sales Order", sales_order)
+
+	if doc.docstatus != 1:
+		frappe.throw(_("Approve transport order {0} before creating an invoice").format(doc.name))
+
+	dn_name = doc.get("custom_delivery_note_to_be_transported")
+	if not dn_name:
+		frappe.throw(_("Delivery Note To Be Transported is required for {0}").format(doc.name))
+
+	_ensure_transport_delivery_note(dn_name)
+	dn_status = frappe.db.get_value("Delivery Note", dn_name, "delivery_status")
+	if dn_status != "Pending Invoicing":
+		frappe.throw(
+			_(
+				"Order {0}: invoice can only be created when delivery status is Pending Invoicing (current: {1})"
+			).format(doc.name, dn_status or "Open")
+		)
+
+	existing = frappe.db.get_value("Delivery Note", dn_name, "transport_sales_invoice")
+	if existing:
+		frappe.throw(
+			_("Transport invoice {0} already exists for delivery {1}").format(existing, dn_name)
+		)
+
+	return doc, dn_name
+
+
+def _complete_transport_delivery(sales_order: str, delivery_note: str, invoice_name: str):
+	"""Mark a transport delivery Completed and log the invoice confirmation."""
+	from ultrafreight.ultra_freight.api.notifications import create_confirmation_log
+
+	dn_values = (
+		frappe.db.get_value(
+			"Delivery Note", delivery_note, ["driver", "transport_customer"], as_dict=True
+		)
+		or {}
+	)
+
+	create_confirmation_log(
+		delivery_note_name=delivery_note,
+		sales_order_name=sales_order,
+		driver_name=dn_values.get("driver"),
+		transport_customer=dn_values.get("transport_customer"),
+		status="Completed",
+	)
+
+	frappe.db.set_value(
+		"Delivery Note",
+		delivery_note,
+		{
+			"delivery_status": "Completed",
+			"transport_sales_invoice": invoice_name,
+		},
+		update_modified=True,
+	)
+
+
+def _parse_transport_order_names(names) -> list[str]:
+	"""Normalise the orders argument coming from the portal (list, JSON string or single name)."""
+	if isinstance(names, str):
+		stripped = names.strip()
+		if stripped.startswith("["):
+			try:
+				names = frappe.parse_json(stripped)
+			except Exception:
+				names = []
+		else:
+			names = [stripped] if stripped else []
+	elif names is None:
+		names = []
+	elif not isinstance(names, (list, tuple)):
+		names = [names]
+
+	parsed = []
+	for name in names:
+		name = (name or "").strip() if isinstance(name, str) else ""
+		if name and name not in parsed:
+			parsed.append(name)
+	return parsed
+
+
 @frappe.whitelist()
 def create_transport_invoice(
 	name: str,
@@ -1394,31 +1490,11 @@ def create_transport_invoice(
 	custom_final_customer_feedback_document: str | None = None,
 ):
 	"""Create transport Sales Invoice from a submitted transport order and mark delivery Completed."""
-	from ultrafreight.ultra_freight.api.notifications import create_confirmation_log
 	from ultrafreight.ultra_freight.api.transport_dispatch import create_transport_sales_invoice_from_order
 
 	_require_login()
-	_ensure_transport_sales_order(name)
-	doc = frappe.get_doc("Sales Order", name)
-	if doc.docstatus != 1:
-		frappe.throw(_("Approve the transport order before creating an invoice"))
 
-	dn_name = doc.get("custom_delivery_note_to_be_transported")
-	if not dn_name:
-		frappe.throw(_("Delivery Note To Be Transported is required"))
-
-	_ensure_transport_delivery_note(dn_name)
-	dn_status = frappe.db.get_value("Delivery Note", dn_name, "delivery_status")
-	if dn_status != "Pending Invoicing":
-		frappe.throw(
-			_("Invoice can only be created when delivery status is Pending Invoicing (current: {0})").format(
-				dn_status or "Open"
-			)
-		)
-
-	existing = frappe.db.get_value("Delivery Note", dn_name, "transport_sales_invoice")
-	if existing:
-		frappe.throw(_("Transport invoice {0} already exists for this delivery").format(existing))
+	_doc, dn_name = _prepare_transport_order_for_invoice(name)
 
 	so_updates = {}
 	if custom_note is not None:
@@ -1429,32 +1505,88 @@ def create_transport_invoice(
 		frappe.db.set_value("Sales Order", name, so_updates, update_modified=True)
 
 	invoice_name = create_transport_sales_invoice_from_order(name)
-	driver_name = frappe.db.get_value("Delivery Note", dn_name, "driver")
-	transport_customer = frappe.db.get_value("Delivery Note", dn_name, "transport_customer")
-
-	create_confirmation_log(
-		delivery_note_name=dn_name,
-		sales_order_name=name,
-		driver_name=driver_name,
-		transport_customer=transport_customer,
-		status="Completed",
-	)
-
-	frappe.db.set_value(
-		"Delivery Note",
-		dn_name,
-		{
-			"delivery_status": "Completed",
-			"transport_sales_invoice": invoice_name,
-		},
-		update_modified=True,
-	)
+	_complete_transport_delivery(name, dn_name, invoice_name)
 
 	return {
 		"name": name,
 		"sales_invoice": invoice_name,
 		"delivery_note": dn_name,
 		"delivery_status": "Completed",
+	}
+
+
+@frappe.whitelist()
+def create_combined_transport_invoice(
+	names: str | list[str] | None = None,
+	custom_note: str | None = None,
+	custom_final_customer_feedback_document: str | None = None,
+):
+	"""Combine one or more transport orders of the same customer into one Sales Invoice."""
+	from ultrafreight.ultra_freight.api.transport_dispatch import (
+		create_combined_transport_sales_invoice_from_orders,
+	)
+
+	_require_login()
+
+	order_names = _parse_transport_order_names(names)
+	if not order_names:
+		frappe.throw(_("Select at least one transport order"))
+
+	prepared = [_prepare_transport_order_for_invoice(order_name) for order_name in order_names]
+	first_doc = prepared[0][0]
+
+	for doc, _delivery_note in prepared[1:]:
+		if doc.customer != first_doc.customer:
+			frappe.throw(
+				_(
+					"Only orders for the same customer can be combined into one invoice. "
+					"{0} is for {1}, {2} is for {3}"
+				).format(
+					first_doc.name,
+					first_doc.customer_name or first_doc.customer,
+					doc.name,
+					doc.customer_name or doc.customer,
+				)
+			)
+		if (doc.company or "") != (first_doc.company or ""):
+			frappe.throw(
+				_("Orders {0} and {1} belong to different companies and cannot be combined").format(
+					first_doc.name, doc.name
+				)
+			)
+		if (doc.currency or "") != (first_doc.currency or ""):
+			frappe.throw(
+				_("Orders {0} and {1} use different currencies and cannot be combined").format(
+					first_doc.name, doc.name
+				)
+			)
+
+	so_updates = {}
+	if custom_note is not None:
+		so_updates["custom_note"] = custom_note
+	if custom_final_customer_feedback_document is not None:
+		so_updates["custom_final_customer_feedback_document"] = custom_final_customer_feedback_document
+	if so_updates:
+		for doc, _delivery_note in prepared:
+			frappe.db.set_value("Sales Order", doc.name, so_updates, update_modified=True)
+
+	invoice_name = create_combined_transport_sales_invoice_from_orders(order_names)
+
+	orders = []
+	for doc, dn_name in prepared:
+		_complete_transport_delivery(doc.name, dn_name, invoice_name)
+		orders.append({"sales_order": doc.name, "delivery_note": dn_name})
+
+	invoice = frappe.db.get_value(
+		"Sales Invoice", invoice_name, ["grand_total", "currency"], as_dict=True
+	) or frappe._dict()
+
+	return {
+		"sales_invoice": invoice_name,
+		"grand_total": invoice.grand_total,
+		"currency": invoice.currency,
+		"delivery_status": "Completed",
+		"orders": orders,
 	}
 
 

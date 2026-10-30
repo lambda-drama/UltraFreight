@@ -95,7 +95,7 @@ website_route_rules = [
 	{"from_route": "/driver", "to_route": "driver"},
 	{"from_route": "/driver/<path:app_path>", "to_route": "driver"},
 	# Legacy SMS/email links → Driver Portal
-	{"from_route": "/driver-confirmation", "to_route": "driver-confirmation"},
+	{"from_route": "/driver-confirmation", "to_route": "driver_confirmation"},
 ]
 
 # Includes in <head>
@@ -103,7 +103,7 @@ website_route_rules = [
 
 # include js, css files in header of desk.html
 # app_include_css = "/assets/ultrafreight/css/ultrafreight.css"
-# app_include_js = "/assets/ultrafreight/js/ultrafreight.js"
+app_include_js = "ultrafreight.bundle.js"
 
 # include js, css files in header of web template
 # web_include_css = "/assets/ultrafreight/css/ultrafreight.css"
@@ -124,7 +124,7 @@ doctype_js = {
 	"Sales Order": "public/js/sales_order.js",
 	"Delivery Note": "public/js/delivery_note.js",
 }
-# doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
+doctype_list_js = {"Sales Order": "public/js/sales_order_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
 
@@ -220,6 +220,12 @@ doc_events = {
 	},
 	"Sales Invoice": {
 		"on_submit": "ultrafreight.ultra_freight.custom.sales_invoice_hooks.sync_main_company_invoice_on_submit",
+	},
+	"Sales Order": {
+		"validate": "ultrafreight.ultra_freight.utils.zone_field.normalize_order_zone_fields",
+	},
+	"Address Zone": {
+		"on_update": "ultrafreight.ultra_freight.api.zone_pricing.sync_draft_transport_orders_on_zone_update",
 	},
 }
 

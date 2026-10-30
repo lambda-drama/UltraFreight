@@ -36,7 +36,7 @@ Served by Frappe at **`/transport`** (driver pages at **`/driver`**). The portal
 | Section | What it shows |
 | --- | --- |
 | Dashboard | Key stats and a monthly invoice trend |
-| Transport Orders | Create (linked or standalone/billing-only), edit, approve, reschedule, cancel, regenerate OTP, create invoice |
+| Transport Orders | Create (linked or standalone/billing-only), edit, approve, reschedule, cancel, regenerate OTP, create invoice — tick several orders of the same customer to combine them into one final invoice |
 | Delivery Orders | Dispatch list, assign driver/vehicle, per-item delivery status, update transport customer |
 | Tracker | Search shipments by status (default *In Transit*) and view delivery movements |
 | OTPs | Active delivery OTPs for driver confirmation, with regeneration |
