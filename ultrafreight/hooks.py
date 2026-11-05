@@ -26,6 +26,7 @@ fixtures = [
 					"Sales Order-transport_email",
 					"Sales Order-transport_address",
 					"Sales Order-transport_column_break",
+					"Sales Order-transport_dispatch_column",
 					"Sales Order-driver",
 					"Sales Order-expected_delivery_date",
 					"Sales Order-transport_charge_order_section",

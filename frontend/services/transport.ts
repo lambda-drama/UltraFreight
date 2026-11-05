@@ -262,10 +262,10 @@ export function updateDispatchTransportCustomer(
   })
 }
 
-export function getTransportOrders(docstatus?: string) {
+export function getTransportOrders(docstatus?: string, search?: string) {
   return apiRequest<TransportOrderRow[]>(`${API}.get_transport_orders`, {
     method: 'POST',
-    body: JSON.stringify({ docstatus: docstatus || '' }),
+    body: JSON.stringify({ docstatus: docstatus || '', search: search || '' }),
   })
 }
 
@@ -728,6 +728,7 @@ export interface TransportSettingsPayload {
   default_print_format?: string
   default_letter_head?: string
   enable_email?: number
+  allow_transport_to_start_from_delivery_note?: number
   create_transport_order_on_dnote_submission?: number
   delivery_note_workflow_action_to_create_order?: string
   enable_sms?: number

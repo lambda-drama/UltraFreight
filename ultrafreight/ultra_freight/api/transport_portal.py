@@ -274,9 +274,22 @@ def get_dispatches(status: str | None = None, filter: str | None = None, search:
 	elif filter == "needs_action":
 		pass
 
+	or_filters = None
+	search = (search or "").strip()
+	if search:
+		like = f"%{search}%"
+		or_filters = [
+			["name", "like", like],
+			["customer_name", "like", like],
+			["transport_customer_name", "like", like],
+			["driver", "like", like],
+			["transport_sales_order", "like", like],
+		]
+
 	records = frappe.get_all(
 		"Delivery Note",
 		filters=filters,
+		or_filters=or_filters,
 		fields=[
 			"name",
 			"customer",
@@ -308,17 +321,6 @@ def get_dispatches(status: str | None = None, filter: str | None = None, search:
 			if row.delivery_status == "Open" or so_docstatus == 0:
 				filtered.append(row)
 		records = filtered
-
-	if search:
-		term = search.strip().lower()
-		records = [
-			row
-			for row in records
-			if term in (row.name or "").lower()
-			or term in (row.customer_name or "").lower()
-			or term in (row.transport_customer_name or "").lower()
-			or term in (row.driver or "").lower()
-		]
 
 	for row in records:
 		row["delivery_status"] = _normalize_delivery_status(row.delivery_status)
@@ -845,7 +847,7 @@ def create_standalone_transport_order(
 
 
 @frappe.whitelist()
-def get_transport_orders(docstatus: str | None = None):
+def get_transport_orders(docstatus: str | None = None, search: str | None = None):
 	_require_login()
 	filters = _transport_sales_order_filters()
 	if docstatus not in (None, ""):
@@ -886,9 +888,22 @@ def get_transport_orders(docstatus: str | None = None):
 		if so_meta.has_field(field):
 			fields.append(field)
 
+	or_filters = None
+	search = (search or "").strip()
+	if search:
+		like = f"%{search}%"
+		or_filters = [
+			["name", "like", like],
+			["customer_name", "like", like],
+			["custom_delivery_note_to_be_transported", "like", like],
+		]
+		if so_meta.has_field("transport_customer_name"):
+			or_filters.append(["transport_customer_name", "like", like])
+
 	orders = frappe.get_all(
 		"Sales Order",
 		filters=filters,
+		or_filters=or_filters,
 		fields=fields,
 		order_by="modified desc",
 		limit=200,
@@ -2289,6 +2304,7 @@ SETTINGS_EDITABLE_FIELDS = (
 	"default_print_format",
 	"default_letter_head",
 	"enable_email",
+	"allow_transport_to_start_from_delivery_note",
 	"create_transport_order_on_dnote_submission",
 	"delivery_note_workflow_action_to_create_order",
 	"enable_sms",

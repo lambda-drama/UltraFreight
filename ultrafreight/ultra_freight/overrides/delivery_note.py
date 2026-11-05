@@ -36,7 +36,13 @@ class UltraFreightDeliveryNote(DeliveryNote):
 		if not self.get("require_direct_delivery"):
 			return
 
-		from ultrafreight.ultra_freight.api.transport_dispatch import _is_valid_transport_sales_order
+		from ultrafreight.ultra_freight.api.transport_dispatch import (
+			_is_valid_transport_sales_order,
+			allow_transport_from_delivery_note,
+		)
+
+		if not allow_transport_from_delivery_note():
+			return
 
 		existing = self.get("transport_sales_order")
 		if existing:

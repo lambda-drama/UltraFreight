@@ -26,6 +26,7 @@
   "column_break_xqlx",
   "default_letter_head",
   "actions_section",
+  "allow_transport_to_start_from_delivery_note",
   "create_transport_order_on_dnote_submission",
   "delivery_note_workflow_action_to_create_order",
   "sms_section",
@@ -182,7 +183,7 @@
    "label": "Enable Email"
   },
   {
-   "depends_on": "eval:!doc.create_transport_order_on_dnote_submission",
+   "depends_on": "eval:doc.allow_transport_to_start_from_delivery_note && !doc.create_transport_order_on_dnote_submission",
    "description": "When Create Transport Order on DNote Submission is off, create the transport Sales Order when this Delivery Note workflow action is applied.",
    "fieldname": "delivery_note_workflow_action_to_create_order",
    "fieldtype": "Link",
@@ -195,7 +196,15 @@
    "label": "Actions"
   },
   {
+   "default": "1",
+   "description": "When enabled, a direct-delivery Delivery Note creates the transport Sales Order and copies that note's transport customer. The zone comes from the delivery note's sales order, or from the transport customer's zone when none was chosen. When disabled, transport is not started from a Delivery Note.",
+   "fieldname": "allow_transport_to_start_from_delivery_note",
+   "fieldtype": "Check",
+   "label": "Allow Transport to Start from Delivery Note"
+  },
+  {
    "default": "0",
+   "depends_on": "eval:doc.allow_transport_to_start_from_delivery_note",
    "fieldname": "create_transport_order_on_dnote_submission",
    "fieldtype": "Check",
    "label": "Create Transport Order on DNote Submission"

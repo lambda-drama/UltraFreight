@@ -59,10 +59,15 @@ def get_sales_order_fields():
 			"allow_on_submit": 1,
 		},
 		{
+			"fieldname": "transport_dispatch_column",
+			"fieldtype": "Column Break",
+			"insert_after": "custom_note",
+		},
+		{
 			"fieldname": "expected_delivery_date",
 			"fieldtype": "Date",
 			"label": "Expected Delivery Date",
-			"insert_after": "custom_note",
+			"insert_after": "transport_dispatch_column",
 		},
 		{
 			"fieldname": "driver",
@@ -376,5 +381,25 @@ def ensure_sales_order_field_layout():
 				)
 		else:
 			create_custom_field("Sales Order", field)
+
+	# Keep Transport Charge on the right column when the field already exists.
+	if frappe.db.exists("Custom Field", "Sales Order-transport_charge"):
+		frappe.db.set_value(
+			"Custom Field",
+			"Sales Order-transport_charge",
+			"insert_after",
+			"custom_reason_for_reschedule",
+			update_modified=False,
+		)
+
+	# Local-only column break. Our transport_dispatch_column replaces it.
+	# Leaving both would split the section into three columns.
+	if frappe.db.exists("Custom Field", "Sales Order-custom_column_break_xatuh"):
+		frappe.delete_doc(
+			"Custom Field",
+			"Sales Order-custom_column_break_xatuh",
+			ignore_permissions=True,
+			force=True,
+		)
 
 	frappe.clear_cache(doctype="Sales Order")

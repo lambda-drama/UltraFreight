@@ -83,6 +83,7 @@ const emptyForm: TransportSettingsPayload = {
   default_print_format: '',
   default_letter_head: '',
   enable_email: 0,
+  allow_transport_to_start_from_delivery_note: 1,
   create_transport_order_on_dnote_submission: 0,
   delivery_note_workflow_action_to_create_order: '',
   enable_sms: 0,
@@ -176,6 +177,7 @@ export default function TransportSettingsPage() {
         default_print_format: form.default_print_format || '',
         default_letter_head: form.default_letter_head || '',
         enable_email: form.enable_email ? 1 : 0,
+        allow_transport_to_start_from_delivery_note: form.allow_transport_to_start_from_delivery_note ? 1 : 0,
         create_transport_order_on_dnote_submission: form.create_transport_order_on_dnote_submission ? 1 : 0,
         delivery_note_workflow_action_to_create_order:
           form.delivery_note_workflow_action_to_create_order || '',
@@ -283,30 +285,53 @@ export default function TransportSettingsPage() {
                   disabled={saving}
                 />
               </div>
-              <div className="flex items-end gap-3 pb-1">
+              <div className="flex items-end gap-3 pb-1 sm:col-span-2">
                 <label className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
-                    checked={Boolean(form.create_transport_order_on_dnote_submission)}
+                    checked={Boolean(form.allow_transport_to_start_from_delivery_note)}
                     onChange={(e) =>
-                      setField('create_transport_order_on_dnote_submission', e.target.checked ? 1 : 0)
+                      setField('allow_transport_to_start_from_delivery_note', e.target.checked ? 1 : 0)
                     }
                     disabled={saving}
                   />
-                  Create transport order on DNote submission
+                  Allow transport to start from a delivery note
                 </label>
               </div>
-              {!form.create_transport_order_on_dnote_submission ? (
-                <div className="sm:col-span-2">
-                  <LinkField
-                    label="Delivery Note Workflow Action To Create Order"
-                    doctype="Workflow Action Master"
-                    value={form.delivery_note_workflow_action_to_create_order || ''}
-                    onChange={(v) => setField('delivery_note_workflow_action_to_create_order', v)}
-                    disabled={saving}
-                    hint="Used when auto-create on submission is off (e.g. Initiate Delivery)."
-                  />
-                </div>
+              <p className="text-xs text-muted-foreground sm:col-span-2">
+                When this is on, the delivery note&apos;s transport customer is copied onto the transport
+                sales order. The zone comes from the goods sales order, or from the transport
+                customer&apos;s zone when none was chosen, and that zone amount is the transport charge.
+                When this is off, a delivery note does not start a transport order.
+              </p>
+              {form.allow_transport_to_start_from_delivery_note ? (
+                <>
+                  <div className="flex items-end gap-3 pb-1">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(form.create_transport_order_on_dnote_submission)}
+                        onChange={(e) =>
+                          setField('create_transport_order_on_dnote_submission', e.target.checked ? 1 : 0)
+                        }
+                        disabled={saving}
+                      />
+                      Create transport order on DNote submission
+                    </label>
+                  </div>
+                  {!form.create_transport_order_on_dnote_submission ? (
+                    <div className="sm:col-span-2">
+                      <LinkField
+                        label="Delivery Note Workflow Action To Create Order"
+                        doctype="Workflow Action Master"
+                        value={form.delivery_note_workflow_action_to_create_order || ''}
+                        onChange={(v) => setField('delivery_note_workflow_action_to_create_order', v)}
+                        disabled={saving}
+                        hint="Used when auto-create on submission is off (e.g. Initiate Delivery)."
+                      />
+                    </div>
+                  ) : null}
+                </>
               ) : null}
             </div>
           </section>

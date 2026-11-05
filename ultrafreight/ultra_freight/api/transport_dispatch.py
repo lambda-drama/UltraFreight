@@ -16,7 +16,7 @@ from ultrafreight.ultra_freight.utils.email_handler import build_hardcoded_email
 from ultrafreight.ultra_freight.utils.otp_generator import generate_otp, get_otp_expiry_minutes
 from ultrafreight.ultra_freight.utils.sms_handler import send_transport_sms
 from ultrafreight.ultra_freight.utils.transport_settings import get_driver_portal_url, get_transport_settings
-from ultrafreight.ultra_freight.utils.zone_field import get_zone_values
+from ultrafreight.ultra_freight.utils.zone_field import get_zone_fields, get_zone_values, set_order_zone
 
 
 def get_main_company_invoice_for_delivery_note(delivery_note_name: str) -> dict | None:
@@ -82,7 +82,66 @@ def sync_main_company_invoice_to_transport_order(delivery_note_name: str, invoic
 	)
 
 
+def allow_transport_from_delivery_note() -> bool:
+	"""Transport Settings switch for creating a transport Sales Order from a Delivery Note."""
+	settings = get_transport_settings()
+	if "allow_transport_to_start_from_delivery_note" not in settings:
+		return True
+	return bool(cint(settings.get("allow_transport_to_start_from_delivery_note")))
+
+
+def _zone_on_sales_order(sales_order_name: str | None) -> str | None:
+	if not sales_order_name or not frappe.db.exists("Sales Order", sales_order_name):
+		return None
+	fields = get_zone_fields("Sales Order")
+	if not fields:
+		return None
+	values = frappe.db.get_value("Sales Order", sales_order_name, fields, as_dict=True) or {}
+	for fieldname in fields:
+		if values.get(fieldname):
+			return values.get(fieldname)
+	return None
+
+
+def zone_for_transport_customer(transport_customer: str | None) -> str | None:
+	"""Default zone on the transport customer, or the first zone they have."""
+	row = get_default_zone_for_transport_customer(transport_customer)
+	if row and row.get("zone"):
+		return row.get("zone")
+	if not transport_customer:
+		return None
+	rows = frappe.get_all(
+		"Address Zone Detail",
+		filters={"parent": transport_customer, "parenttype": "Transport Customer"},
+		pluck="zone",
+		order_by="idx asc",
+		limit=1,
+	)
+	return rows[0] if rows else None
+
+
+def _copy_delivery_note_customer(target, delivery_note) -> None:
+	"""Copy the delivery note's transport customer details onto a sales order."""
+	for field in (
+		"transport_customer",
+		"transport_customer_name",
+		"transport_phone",
+		"transport_email",
+		"transport_address",
+	):
+		if target.meta.has_field(field):
+			target.set(field, delivery_note.get(field))
+
+
 def create_transport_sales_order(delivery_note_name: str) -> str:
+	if not allow_transport_from_delivery_note():
+		frappe.throw(
+			_(
+				"Transport is not allowed to start from a Delivery Note. "
+				"Enable Allow Transport to Start from Delivery Note in Transport Settings."
+			)
+		)
+
 	doc = frappe.get_doc("Delivery Note", delivery_note_name)
 	settings = get_transport_settings()
 
@@ -106,8 +165,9 @@ def create_transport_sales_order(delivery_note_name: str) -> str:
 		frappe.throw(_("Delivery Note customer is required to create transport sales order"))
 
 	transport_customer = doc.get("transport_customer")
-	default_zone = get_default_zone_for_transport_customer(transport_customer)
-	address_zone = default_zone.get("zone") if default_zone else None
+	address_zone = _zone_on_sales_order(original_goods_order) or zone_for_transport_customer(
+		transport_customer
+	)
 	transport_charge = resolve_transport_charge(
 		settings=settings,
 		address_zone=address_zone,
@@ -123,6 +183,13 @@ def create_transport_sales_order(delivery_note_name: str) -> str:
 	so.delivery_date = frappe.utils.today()
 	so.currency = frappe.db.get_value("Company", company, "default_currency")
 	so.conversion_rate = 1
+	so.custom_is_transport_order = 1
+	so.custom_delivery_note_to_be_transported = doc.name
+	_copy_delivery_note_customer(so, doc)
+	if address_zone:
+		set_order_zone(so, address_zone)
+	if so.meta.has_field("transport_charge") and transport_charge:
+		so.transport_charge = transport_charge
 
 	_append_transport_service_item(so, transport_item, transport_charge, doc.name, original_goods_order)
 	_apply_transport_taxes(so, taxes_and_charges, company)
@@ -270,7 +337,14 @@ def create_standalone_transport_sales_order(
 	if not frappe.db.exists("Customer", customer):
 		frappe.throw(_("Customer {0} was not found").format(customer))
 
-	delivery_note = resolve_delivery_note_reference(delivery_note)
+	delivery_note = resolve_delivery_note_reference(delivery_note) if delivery_note else None
+	if delivery_note and not allow_transport_from_delivery_note():
+		frappe.throw(
+			_(
+				"Transport is not allowed to start from a Delivery Note. "
+				"Enable Allow Transport to Start from Delivery Note in Transport Settings."
+			)
+		)
 	goods_order = None
 	if delivery_note:
 		goods_order = frappe.db.get_value(
@@ -314,7 +388,20 @@ def create_standalone_transport_sales_order(
 				"transport_address": dn_tc.transport_address,
 			}
 
-	transport_charge = flt(rate) if rate is not None else flt(settings.get("default_transport_charges"))
+	if not (custom_address_zone or "").strip():
+		custom_address_zone = _zone_on_sales_order(goods_order) or zone_for_transport_customer(
+			(final_customer or {}).get("transport_customer")
+		)
+
+	if rate is None and custom_address_zone:
+		transport_charge = resolve_transport_charge(
+			settings=settings,
+			address_zone=custom_address_zone,
+			transport_customer=(final_customer or {}).get("transport_customer"),
+			goods_sales_order_name=goods_order,
+		)
+	else:
+		transport_charge = flt(rate) if rate is not None else flt(settings.get("default_transport_charges"))
 	line_qty = flt(qty) or 1
 	taxes_and_charges = settings.get("default_sales_taxes_template")
 

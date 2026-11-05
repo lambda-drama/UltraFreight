@@ -23,6 +23,7 @@ class UltraFreightSalesOrder(SalesOrder):
 	def before_save(self):
 		self.clear_transport_fields_from_goods_orders()
 		self.handle_transport_customer()
+		self.apply_default_direct_delivery_zone()
 		self.sync_customer_zones()
 
 	def clear_transport_fields_from_goods_orders(self):
@@ -89,6 +90,35 @@ class UltraFreightSalesOrder(SalesOrder):
 				delivery_address=self.get("transport_address"),
 			)
 			sync_transport_customer_fields(self)
+
+	def apply_default_direct_delivery_zone(self):
+		"""Direct delivery started on the sales order, with no zone chosen.
+
+		Use the transport customer's zone and put that zone's amount on the order.
+		"""
+		if self.get("custom_is_transport_order") or not self.get("require_direct_delivery"):
+			return
+
+		from ultrafreight.ultra_freight.api.transport_dispatch import (
+			resolve_transport_charge,
+			zone_for_transport_customer,
+		)
+		from ultrafreight.ultra_freight.utils.zone_field import get_order_zone, set_order_zone
+
+		if get_order_zone(self) or not self.get("transport_customer"):
+			return
+
+		zone = zone_for_transport_customer(self.get("transport_customer"))
+		if not zone:
+			return
+
+		set_order_zone(self, zone)
+		amount = resolve_transport_charge(
+			address_zone=zone,
+			transport_customer=self.get("transport_customer"),
+		)
+		if amount and self.meta.has_field("transport_charge"):
+			self.transport_charge = amount
 
 	def sync_customer_zones(self):
 		"""Copy Transport Customer zones onto Sales Order when that table is still empty."""
