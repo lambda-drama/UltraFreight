@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import {
   getPortalTransportSettings,
   searchSettingsLinkOptions,
+  syncAllDraftTransportPrices,
   updatePortalTransportSettings,
   type TransportSettingsPayload,
 } from '@/services/transport'
@@ -104,6 +105,7 @@ export default function TransportSettingsPage() {
   )
   const [form, setForm] = useState<TransportSettingsPayload>(emptyForm)
   const [saving, setSaving] = useState(false)
+  const [syncingPrices, setSyncingPrices] = useState(false)
 
   useEffect(() => {
     if (data) {
@@ -132,6 +134,29 @@ export default function TransportSettingsPage() {
 
   function setField<K extends keyof TransportSettingsPayload>(key: K, value: TransportSettingsPayload[K]) {
     setForm((prev) => ({ ...prev, [key]: value }))
+  }
+
+  async function handleSyncDraftPrices() {
+    const confirmed = window.confirm(
+      'Set the transport charge on every draft transport sales order to the amount on its address zone? Submitted orders are left unchanged.'
+    )
+    if (!confirmed) return
+
+    setSyncingPrices(true)
+    try {
+      const result = await syncAllDraftTransportPrices()
+      const skipped = (result.skipped || [])
+        .slice(0, 5)
+        .map((row) => `${row.name}: ${row.reason || 'skipped'}`)
+        .join('; ')
+      toast.success(
+        `Checked ${result.total || 0} draft transport orders. Updated ${result.total_updated || 0}, already matching ${result.total_unchanged || 0}, skipped ${result.total_skipped || 0}.${skipped ? ` ${skipped}` : ''}`
+      )
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not update draft transport prices')
+    } finally {
+      setSyncingPrices(false)
+    }
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -390,13 +415,28 @@ export default function TransportSettingsPage() {
           </section>
 
           <div className="flex justify-end">
-            <Button type="submit" disabled={saving}>
+            <Button type="submit" disabled={saving || syncingPrices}>
               {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
               Save settings
             </Button>
           </div>
         </form>
       )}
+
+      {!isLoading ? (
+        <section className="mt-6 space-y-3 rounded-2xl border border-border bg-card p-5">
+          <h2 className="text-sm font-semibold">Draft transport prices</h2>
+          <p className="text-sm text-muted-foreground">
+            Copy each address zone amount onto every draft transport sales order. Orders that are
+            already submitted are left unchanged. Orders with no zone, or a zone with no amount, are
+            skipped.
+          </p>
+          <Button type="button" variant="outline" onClick={() => void handleSyncDraftPrices()} disabled={syncingPrices || saving}>
+            {syncingPrices ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            Update draft transport prices
+          </Button>
+        </section>
+      ) : null}
     </div>
   )
 }

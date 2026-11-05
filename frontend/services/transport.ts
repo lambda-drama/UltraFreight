@@ -749,6 +749,22 @@ export function updatePortalTransportSettings(payload: Record<string, string | n
   })
 }
 
+export interface DraftTransportPriceSyncResult {
+  total: number
+  total_updated: number
+  total_unchanged: number
+  total_skipped: number
+  updated: { name: string; zone?: string }[]
+  skipped: { name: string; reason?: string }[]
+}
+
+export function syncAllDraftTransportPrices() {
+  return apiRequest<DraftTransportPriceSyncResult>(
+    '/api/method/ultrafreight.ultra_freight.api.zone_pricing.sync_all_draft_transport_order_prices',
+    { method: 'POST', body: JSON.stringify({}) }
+  )
+}
+
 export function searchSettingsLinkOptions(doctype: string, search?: string) {
   return apiRequest<{ name: string; label: string }[]>(`${API}.search_settings_link_options`, {
     method: 'POST',

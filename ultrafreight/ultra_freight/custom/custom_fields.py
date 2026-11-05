@@ -42,77 +42,13 @@ def get_sales_order_fields():
 			"fieldname": "transport_address",
 			"fieldtype": "Text",
 			"label": "Transport Address",
-			"insert_after": "transport_email",
-		},
-		{
-			"fieldname": "transport_column_break",
-			"fieldtype": "Column Break",
-			"insert_after": "transport_address",
-		},
-		{
-			"fieldname": "driver",
-			"fieldtype": "Link",
-			"label": "Driver",
-			"options": "Driver",
-			"insert_after": "transport_column_break",
-		},
-		{
-			"fieldname": "expected_delivery_date",
-			"fieldtype": "Date",
-			"label": "Expected Delivery Date",
 			"insert_after": "driver",
-		},
-		{
-			"fieldname": "transport_charge",
-			"fieldtype": "Currency",
-			"label": "Transport Charge",
-			"insert_after": "expected_delivery_date",
-		},
-		{
-			"fieldname": "custom_main_company_invoice",
-			"fieldtype": "Link",
-			"options": "Sales Invoice",
-			"label": "Main Company Invoice",
-			"insert_after": "transport_charge",
-			"read_only": 1,
-		},
-		{
-			"fieldname": "custom_main_company_invoice_date",
-			"fieldtype": "Date",
-			"label": "Main Company Invoice Date",
-			"insert_after": "custom_main_company_invoice",
-			"fetch_from": "custom_main_company_invoice.posting_date",
-			"read_only": 1,
-		},
-		{
-			"fieldname": "custom_last_customer_invoice",
-			"fieldtype": "Data",
-			"label": "Transport Customer Invoice",
-			"insert_after": "custom_main_company_invoice_date",
-		},
-		{
-			"fieldname": "custom_last_customer_invoice_date",
-			"fieldtype": "Date",
-			"label": "Transport Customer Invoice Date",
-			"insert_after": "custom_last_customer_invoice",
-		},
-		{
-			"fieldname": "custom_last_customer_delivery_note",
-			"fieldtype": "Data",
-			"label": "Transport Customer Delivery Note",
-			"insert_after": "custom_last_customer_invoice_date",
-		},
-		{
-			"fieldname": "custom_last_customer_delivery_note_date",
-			"fieldtype": "Date",
-			"label": "Transport Customer Delivery Note Date",
-			"insert_after": "custom_last_customer_delivery_note",
 		},
 		{
 			"fieldname": "custom_final_customer_feedback_document",
 			"fieldtype": "Attach",
-			"label": "Transport Customer Feedback Document",
-			"insert_after": "custom_last_customer_delivery_note_date",
+			"label": "Final Customer Feedback Document",
+			"insert_after": "transport_email",
 			"allow_on_submit": 1,
 		},
 		{
@@ -123,10 +59,23 @@ def get_sales_order_fields():
 			"allow_on_submit": 1,
 		},
 		{
+			"fieldname": "expected_delivery_date",
+			"fieldtype": "Date",
+			"label": "Expected Delivery Date",
+			"insert_after": "custom_note",
+		},
+		{
+			"fieldname": "driver",
+			"fieldtype": "Link",
+			"label": "Driver",
+			"options": "Driver",
+			"insert_after": "expected_delivery_date",
+		},
+		{
 			"fieldname": "custom_reschedule_transport_order",
 			"fieldtype": "Check",
 			"label": "Reschedule Transport Order",
-			"insert_after": "custom_note",
+			"insert_after": "transport_address",
 		},
 		{
 			"fieldname": "custom_reason_for_reschedule",
@@ -138,31 +87,29 @@ def get_sales_order_fields():
 		{
 			"fieldname": "transport_charge_order_section",
 			"fieldtype": "Section Break",
-			"label": "Transport Charge Order",
+			"label": "Final Invoice Details",
 			"collapsible": 1,
 			"insert_after": "custom_reason_for_reschedule",
 		},
 		{
-			"fieldname": "custom_is_transport_order",
-			"fieldtype": "Check",
-			"label": "Is Transport Order",
-			"read_only": 1,
+			"fieldname": "custom_main_company_invoice",
+			"fieldtype": "Data",
+			"label": "Main Company Invoice",
 			"insert_after": "transport_charge_order_section",
-		},
-		{
-			"fieldname": "custom_delivery_note_to_be_transported",
-			"fieldtype": "Link",
-			"label": "Delivery Note To Be Transported",
-			"options": "Delivery Note",
 			"read_only": 1,
-			"insert_after": "custom_is_transport_order",
 		},
 		{
-			"fieldname": "custom_address_zone",
-			"fieldtype": "Link",
-			"label": "Address Zone",
-			"options": "Address Zone",
-			"insert_after": "custom_delivery_note_to_be_transported",
+			"fieldname": "custom_main_company_invoice_date",
+			"fieldtype": "Date",
+			"label": "Main Company Invoice Date",
+			"insert_after": "custom_main_company_invoice",
+			"read_only": 1,
+		},
+		{
+			"fieldname": "custom_last_customer_invoice",
+			"fieldtype": "Data",
+			"label": "Last Customer Invoice",
+			"insert_after": "custom_main_company_invoice_date",
 		},
 		{
 			"fieldname": "custom_completed_without_otp",
@@ -170,7 +117,59 @@ def get_sales_order_fields():
 			"label": "Completed Without OTP",
 			"read_only": 1,
 			"allow_on_submit": 1,
-			"insert_after": "custom_address_zone",
+			"insert_after": "custom_last_customer_invoice",
+		},
+		{
+			"fieldname": "transport_column_break",
+			"fieldtype": "Column Break",
+			"insert_after": "custom_completed_without_otp",
+		},
+		{
+			"fieldname": "custom_last_customer_invoice_date",
+			"fieldtype": "Date",
+			"label": "Final Customer Invoice Date",
+			"insert_after": "transport_column_break",
+		},
+		{
+			"fieldname": "custom_last_customer_delivery_note",
+			"fieldtype": "Data",
+			"label": "Final Customer Delivery Note",
+			"insert_after": "custom_last_customer_invoice_date",
+		},
+		{
+			"fieldname": "custom_last_customer_delivery_note_date",
+			"fieldtype": "Date",
+			"label": "Final Customer Delivery Note Date",
+			"insert_after": "custom_last_customer_delivery_note",
+		},
+		{
+			"fieldname": "custom_section_break_pfwwy",
+			"fieldtype": "Section Break",
+			"label": "Final Customer Zone",
+			"collapsible": 1,
+			"insert_after": "custom_last_customer_delivery_note_date",
+		},
+		{
+			"fieldname": "custom_customer_zone",
+			"fieldtype": "Table",
+			"label": "Customer Zone",
+			"options": "Address Zone Detail",
+			"insert_after": "custom_section_break_pfwwy",
+		},
+		{
+			"fieldname": "custom_is_transport_order",
+			"fieldtype": "Check",
+			"label": "Is Transport Order",
+			"read_only": 1,
+			"insert_after": "order_type",
+		},
+		{
+			"fieldname": "custom_delivery_note_to_be_transported",
+			"fieldtype": "Link",
+			"label": "Delivery Note To Be Transported",
+			"options": "Delivery Note",
+			"read_only": 1,
+			"insert_after": "custom_customer_zone",
 		},
 	]
 
@@ -350,3 +349,32 @@ def get_custom_fields():
 		"Delivery Note": get_delivery_note_fields(),
 		"Driver": get_driver_fields(),
 	}
+
+
+def ensure_sales_order_field_layout():
+	"""Put Sales Order transport fields back in a chain this app owns.
+
+	Migrate imports ``insert_after`` from fixtures. The form is then built from
+	that chain. Anchors have to be standard Sales Order fields, or fields this
+	app creates. A missing anchor dumps the rest of the chain at the end of the
+	form, which is the Connections tab.
+	"""
+	import frappe
+	from frappe.custom.doctype.custom_field.custom_field import create_custom_field
+
+	for field in get_sales_order_fields():
+		name = f"Sales Order-{field['fieldname']}"
+		insert_after = field.get("insert_after")
+		if frappe.db.exists("Custom Field", name):
+			if frappe.db.get_value("Custom Field", name, "insert_after") != insert_after:
+				frappe.db.set_value(
+					"Custom Field",
+					name,
+					"insert_after",
+					insert_after,
+					update_modified=False,
+				)
+		else:
+			create_custom_field("Sales Order", field)
+
+	frappe.clear_cache(doctype="Sales Order")
