@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import {
   getPortalTransportSettings,
   searchSettingsLinkOptions,
+  syncAllDraftTransportPrices,
   updatePortalTransportSettings,
   type TransportSettingsPayload,
 } from '@/services/transport'
@@ -82,6 +83,7 @@ const emptyForm: TransportSettingsPayload = {
   default_print_format: '',
   default_letter_head: '',
   enable_email: 0,
+  allow_transport_to_start_from_delivery_note: 1,
   create_transport_order_on_dnote_submission: 0,
   delivery_note_workflow_action_to_create_order: '',
   enable_sms: 0,
@@ -104,6 +106,7 @@ export default function TransportSettingsPage() {
   )
   const [form, setForm] = useState<TransportSettingsPayload>(emptyForm)
   const [saving, setSaving] = useState(false)
+  const [syncingPrices, setSyncingPrices] = useState(false)
 
   useEffect(() => {
     if (data) {
@@ -134,6 +137,29 @@ export default function TransportSettingsPage() {
     setForm((prev) => ({ ...prev, [key]: value }))
   }
 
+  async function handleSyncDraftPrices() {
+    const confirmed = window.confirm(
+      'Set the transport charge on every draft transport sales order to the amount on its address zone? Submitted orders are left unchanged.'
+    )
+    if (!confirmed) return
+
+    setSyncingPrices(true)
+    try {
+      const result = await syncAllDraftTransportPrices()
+      const skipped = (result.skipped || [])
+        .slice(0, 5)
+        .map((row) => `${row.name}: ${row.reason || 'skipped'}`)
+        .join('; ')
+      toast.success(
+        `Checked ${result.total || 0} draft transport orders. Updated ${result.total_updated || 0}, already matching ${result.total_unchanged || 0}, skipped ${result.total_skipped || 0}.${skipped ? ` ${skipped}` : ''}`
+      )
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not update draft transport prices')
+    } finally {
+      setSyncingPrices(false)
+    }
+  }
+
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
@@ -151,6 +177,7 @@ export default function TransportSettingsPage() {
         default_print_format: form.default_print_format || '',
         default_letter_head: form.default_letter_head || '',
         enable_email: form.enable_email ? 1 : 0,
+        allow_transport_to_start_from_delivery_note: form.allow_transport_to_start_from_delivery_note ? 1 : 0,
         create_transport_order_on_dnote_submission: form.create_transport_order_on_dnote_submission ? 1 : 0,
         delivery_note_workflow_action_to_create_order:
           form.delivery_note_workflow_action_to_create_order || '',
@@ -258,30 +285,53 @@ export default function TransportSettingsPage() {
                   disabled={saving}
                 />
               </div>
-              <div className="flex items-end gap-3 pb-1">
+              <div className="flex items-end gap-3 pb-1 sm:col-span-2">
                 <label className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
-                    checked={Boolean(form.create_transport_order_on_dnote_submission)}
+                    checked={Boolean(form.allow_transport_to_start_from_delivery_note)}
                     onChange={(e) =>
-                      setField('create_transport_order_on_dnote_submission', e.target.checked ? 1 : 0)
+                      setField('allow_transport_to_start_from_delivery_note', e.target.checked ? 1 : 0)
                     }
                     disabled={saving}
                   />
-                  Create transport order on DNote submission
+                  Allow transport to start from a delivery note
                 </label>
               </div>
-              {!form.create_transport_order_on_dnote_submission ? (
-                <div className="sm:col-span-2">
-                  <LinkField
-                    label="Delivery Note Workflow Action To Create Order"
-                    doctype="Workflow Action Master"
-                    value={form.delivery_note_workflow_action_to_create_order || ''}
-                    onChange={(v) => setField('delivery_note_workflow_action_to_create_order', v)}
-                    disabled={saving}
-                    hint="Used when auto-create on submission is off (e.g. Initiate Delivery)."
-                  />
-                </div>
+              <p className="text-xs text-muted-foreground sm:col-span-2">
+                When this is on, the delivery note&apos;s transport customer is copied onto the transport
+                sales order. The zone comes from the goods sales order, or from the transport
+                customer&apos;s zone when none was chosen, and that zone amount is the transport charge.
+                When this is off, a delivery note does not start a transport order.
+              </p>
+              {form.allow_transport_to_start_from_delivery_note ? (
+                <>
+                  <div className="flex items-end gap-3 pb-1">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(form.create_transport_order_on_dnote_submission)}
+                        onChange={(e) =>
+                          setField('create_transport_order_on_dnote_submission', e.target.checked ? 1 : 0)
+                        }
+                        disabled={saving}
+                      />
+                      Create transport order on DNote submission
+                    </label>
+                  </div>
+                  {!form.create_transport_order_on_dnote_submission ? (
+                    <div className="sm:col-span-2">
+                      <LinkField
+                        label="Delivery Note Workflow Action To Create Order"
+                        doctype="Workflow Action Master"
+                        value={form.delivery_note_workflow_action_to_create_order || ''}
+                        onChange={(v) => setField('delivery_note_workflow_action_to_create_order', v)}
+                        disabled={saving}
+                        hint="Used when auto-create on submission is off (e.g. Initiate Delivery)."
+                      />
+                    </div>
+                  ) : null}
+                </>
               ) : null}
             </div>
           </section>
@@ -390,13 +440,28 @@ export default function TransportSettingsPage() {
           </section>
 
           <div className="flex justify-end">
-            <Button type="submit" disabled={saving}>
+            <Button type="submit" disabled={saving || syncingPrices}>
               {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
               Save settings
             </Button>
           </div>
         </form>
       )}
+
+      {!isLoading ? (
+        <section className="mt-6 space-y-3 rounded-2xl border border-border bg-card p-5">
+          <h2 className="text-sm font-semibold">Draft transport prices</h2>
+          <p className="text-sm text-muted-foreground">
+            Copy each address zone amount onto every draft transport sales order. Orders that are
+            already submitted are left unchanged. Orders with no zone, or a zone with no amount, are
+            skipped.
+          </p>
+          <Button type="button" variant="outline" onClick={() => void handleSyncDraftPrices()} disabled={syncingPrices || saving}>
+            {syncingPrices ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            Update draft transport prices
+          </Button>
+        </section>
+      ) : null}
     </div>
   )
 }

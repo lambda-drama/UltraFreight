@@ -26,10 +26,10 @@ fixtures = [
 					"Sales Order-transport_email",
 					"Sales Order-transport_address",
 					"Sales Order-transport_column_break",
+					"Sales Order-transport_dispatch_column",
 					"Sales Order-driver",
 					"Sales Order-expected_delivery_date",
-					# "Sales Order-transport_charge",
-					# "Sales Order-transport_charge_order_section",
+					"Sales Order-transport_charge_order_section",
 					"Sales Order-custom_is_transport_order",
 					"Sales Order-custom_delivery_note_to_be_transported",
 					"Delivery Note-transport_dispatch_section",
@@ -167,6 +167,7 @@ doctype_list_js = {"Sales Order": "public/js/sales_order_list.js"}
 
 # before_install = "ultrafreight.install.before_install"
 # after_install = "ultrafreight.install.after_install"
+after_migrate = "ultrafreight.ultra_freight.custom.custom_fields.ensure_sales_order_field_layout"
 
 # Uninstallation
 # ------------

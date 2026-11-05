@@ -3,13 +3,16 @@
 A transport order is billed from a single transport service line, and that line's
 rate comes from the ``Address Zone`` master (``transport_charges``).
 
-Two Desk flows use this module:
+Three flows use this module:
 
 * the **Update Zone Prices** button on Sales Order (form and list) opens a dialog
   with every draft transport order, so a user can pick the orders — and the zone
   for each of them — and push the zone amount into the order price;
 * saving an ``Address Zone`` with a new amount re-prices every draft transport
-  order that follows that zone (``sync_draft_transport_orders_on_zone_update``).
+  order that follows that zone (``sync_draft_transport_orders_on_zone_update``);
+* **Update Draft Transport Prices** on Transport Settings re-prices every draft
+  transport order from its current zone amount, including older orders that were
+  never touched by a later zone change.
 """
 
 from __future__ import annotations
@@ -424,6 +427,86 @@ def update_transport_order_prices(names=None, zones=None):
 		"total_unchanged": len(unchanged),
 		"total_skipped": len(skipped),
 	}
+
+
+def _draft_transport_order_names() -> list[str]:
+	return frappe.get_all(
+		"Sales Order",
+		filters={"docstatus": 0, "custom_is_transport_order": 1},
+		pluck="name",
+		order_by="modified asc",
+		limit=0,
+	)
+
+
+def _require_bulk_zone_price_sync():
+	if frappe.session.user != "Administrator" and "System Manager" not in frappe.get_roles():
+		frappe.throw(
+			_("Only System Manager or Administrator can update draft transport prices from Transport Settings"),
+			frappe.PermissionError,
+		)
+	if not frappe.has_permission("Sales Order", "write"):
+		frappe.throw(_("You do not have permission to update Sales Orders"), frappe.PermissionError)
+
+
+def apply_zone_prices_to_draft_transport_orders() -> dict:
+	"""Copy each Address Zone amount onto every draft transport Sales Order."""
+	names = _draft_transport_order_names()
+	updated, unchanged, skipped = [], [], []
+
+	frappe.flags[SYNC_FLAG] = True
+	try:
+		total = len(names)
+		for index, name in enumerate(names, start=1):
+			result = sync_transport_order_price(name)
+			status = result.get("status")
+			if status == "updated":
+				updated.append({"name": result["name"], "zone": result.get("zone")})
+			elif status == "unchanged":
+				unchanged.append(result["name"])
+			else:
+				skipped.append({"name": result.get("name") or name, "reason": result.get("reason")})
+
+			if total and index % 10 == 0:
+				frappe.publish_progress(
+					index / total * 100,
+					title=_("Updating draft transport prices"),
+					description=_("{0} of {1}").format(index, total),
+				)
+			if not frappe.flags.in_test and index % 25 == 0:
+				frappe.db.commit()
+	finally:
+		frappe.flags[SYNC_FLAG] = False
+
+	return {
+		"total": len(names),
+		"total_updated": len(updated),
+		"total_unchanged": len(unchanged),
+		"total_skipped": len(skipped),
+		"updated": updated,
+		"skipped": skipped,
+	}
+
+
+@frappe.whitelist()
+def sync_all_draft_transport_order_prices():
+	"""Re-price every draft transport Sales Order from its Address Zone amount."""
+	_require_bulk_zone_price_sync()
+	summary = apply_zone_prices_to_draft_transport_orders()
+
+	frappe.msgprint(
+		_(
+			"Checked {0} draft transport order(s). Updated {1}, already matching {2}, skipped {3}."
+		).format(
+			summary["total"],
+			summary["total_updated"],
+			summary["total_unchanged"],
+			summary["total_skipped"],
+		),
+		title=_("Draft Transport Prices"),
+		indicator="green" if summary["total_updated"] else "blue",
+	)
+	return summary
 
 
 def sync_draft_transport_orders_on_zone_update(doc, method=None):

@@ -16,31 +16,34 @@ def get_driver_portal_url(query: str | None = None) -> str:
 
 
 def get_transport_settings() -> dict:
+	fields = [
+		"otp_expiry_minutes",
+		"sms_provider",
+		"sms_api_key",
+		"sms_sender_id",
+		"sms_api_url",
+		"default_country_code",
+		"enable_sms",
+		"enable_email",
+		"ultra_transport_company",
+		"default_transport_item",
+		"default_sales_taxes_template",
+		"default_transport_charges",
+		"ultra_transport_email",
+		"branch",
+		"cost_center",
+		"default_print_format",
+		"default_letter_head",
+		"create_transport_order_on_dnote_submission",
+		"delivery_note_workflow_action_to_create_order",
+	]
+	if frappe.get_meta("Transport Settings").has_field("allow_transport_to_start_from_delivery_note"):
+		fields.append("allow_transport_to_start_from_delivery_note")
 	return (
 		frappe.get_cached_value(
 			"Transport Settings",
 			"Transport Settings",
-			[
-				"otp_expiry_minutes",
-				"sms_provider",
-				"sms_api_key",
-				"sms_sender_id",
-				"sms_api_url",
-				"default_country_code",
-				"enable_sms",
-				"enable_email",
-				"ultra_transport_company",
-				"default_transport_item",
-				"default_sales_taxes_template",
-				"default_transport_charges",
-				"ultra_transport_email",
-				"branch",
-				"cost_center",
-				"default_print_format",
-				"default_letter_head",
-				"create_transport_order_on_dnote_submission",
-				"delivery_note_workflow_action_to_create_order",
-			],
+			fields,
 			as_dict=True,
 		)
 		or {}

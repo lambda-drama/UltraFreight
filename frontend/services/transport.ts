@@ -262,10 +262,10 @@ export function updateDispatchTransportCustomer(
   })
 }
 
-export function getTransportOrders(docstatus?: string) {
+export function getTransportOrders(docstatus?: string, search?: string) {
   return apiRequest<TransportOrderRow[]>(`${API}.get_transport_orders`, {
     method: 'POST',
-    body: JSON.stringify({ docstatus: docstatus || '' }),
+    body: JSON.stringify({ docstatus: docstatus || '', search: search || '' }),
   })
 }
 
@@ -728,6 +728,7 @@ export interface TransportSettingsPayload {
   default_print_format?: string
   default_letter_head?: string
   enable_email?: number
+  allow_transport_to_start_from_delivery_note?: number
   create_transport_order_on_dnote_submission?: number
   delivery_note_workflow_action_to_create_order?: string
   enable_sms?: number
@@ -747,6 +748,22 @@ export function updatePortalTransportSettings(payload: Record<string, string | n
     method: 'POST',
     body: JSON.stringify(payload),
   })
+}
+
+export interface DraftTransportPriceSyncResult {
+  total: number
+  total_updated: number
+  total_unchanged: number
+  total_skipped: number
+  updated: { name: string; zone?: string }[]
+  skipped: { name: string; reason?: string }[]
+}
+
+export function syncAllDraftTransportPrices() {
+  return apiRequest<DraftTransportPriceSyncResult>(
+    '/api/method/ultrafreight.ultra_freight.api.zone_pricing.sync_all_draft_transport_order_prices',
+    { method: 'POST', body: JSON.stringify({}) }
+  )
 }
 
 export function searchSettingsLinkOptions(doctype: string, search?: string) {

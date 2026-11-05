@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import useSWR from 'swr'
 import { toast } from 'sonner'
 import {
@@ -96,8 +96,14 @@ export default function TransportOrdersPage() {
   const [docstatusFilter, setDocstatusFilter] = useState('')
   const [customer, setCustomer] = useState('')
   const [deliveryStatus, setDeliveryStatus] = useState('')
-  const { data, isLoading, mutate } = useSWR(['transport-orders', docstatusFilter], () =>
-    getTransportOrders(docstatusFilter)
+  const [idQuery, setIdQuery] = useState('')
+  const [idSearch, setIdSearch] = useState('')
+  useEffect(() => {
+    const timer = window.setTimeout(() => setIdSearch(idQuery.trim()), 300)
+    return () => window.clearTimeout(timer)
+  }, [idQuery])
+  const { data, isLoading, mutate } = useSWR(['transport-orders', docstatusFilter, idSearch], () =>
+    getTransportOrders(docstatusFilter, idSearch)
   )
   const { data: drivers } = useSWR('drivers-active', () => getDrivers(false))
   const { data: vehicles } = useSWR('vehicles-list', getVehicles)
@@ -952,6 +958,14 @@ export default function TransportOrdersPage() {
 
       <FilterToolbar
         fields={[
+          {
+            key: 'id',
+            label: 'ID',
+            type: 'text',
+            value: idQuery,
+            onChange: setIdQuery,
+            placeholder: 'Sales order or delivery note…',
+          },
           {
             key: 'customer',
             label: 'Customer',
