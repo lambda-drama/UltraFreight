@@ -27,6 +27,7 @@ fixtures = [
 					"Sales Order-transport_address",
 					"Sales Order-transport_column_break",
 					"Sales Order-transport_dispatch_column",
+					"Sales Order-transport_dispatch_address_column",
 					"Sales Order-driver",
 					"Sales Order-expected_delivery_date",
 					"Sales Order-transport_charge_order_section",
@@ -84,7 +85,13 @@ add_to_apps_screen = [
 		"name": "ultrafreight",
 		"logo": "/assets/ultrafreight/image/logo.png",
 		"title": "Ultra Freight",
-		"route": "/transport",
+		# Land on the Ultra Dispatch workspace instead of the Next.js portal. A single
+		# click on the apps/desktop page opens this route directly. The `/app/<workspace>`
+		# spelling is native on v15 (see frappe/apps.py:get_route) and v16 redirects
+		# /app/* to /desk/* (see frappe/hooks.py:website_redirects), so the same route
+		# works on both. The portal stays one click away through the workspace's
+		# "Transport Portal" shortcut.
+		"route": "/app/ultra-dispatch",
 		"has_permission": "ultrafreight.ultra_freight.api.permission.has_app_permission",
 	}
 ]

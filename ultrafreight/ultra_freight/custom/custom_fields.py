@@ -39,29 +39,9 @@ def get_sales_order_fields():
 			"insert_after": "transport_phone",
 		},
 		{
-			"fieldname": "transport_address",
-			"fieldtype": "Text",
-			"label": "Transport Address",
-			"insert_after": "driver",
-		},
-		{
-			"fieldname": "custom_final_customer_feedback_document",
-			"fieldtype": "Attach",
-			"label": "Final Customer Feedback Document",
-			"insert_after": "transport_email",
-			"allow_on_submit": 1,
-		},
-		{
-			"fieldname": "custom_note",
-			"fieldtype": "Small Text",
-			"label": "Note",
-			"insert_after": "custom_final_customer_feedback_document",
-			"allow_on_submit": 1,
-		},
-		{
 			"fieldname": "transport_dispatch_column",
 			"fieldtype": "Column Break",
-			"insert_after": "custom_note",
+			"insert_after": "transport_email",
 		},
 		{
 			"fieldname": "expected_delivery_date",
@@ -75,6 +55,31 @@ def get_sales_order_fields():
 			"label": "Driver",
 			"options": "Driver",
 			"insert_after": "expected_delivery_date",
+		},
+		{
+			"fieldname": "custom_note",
+			"fieldtype": "Small Text",
+			"label": "Note",
+			"insert_after": "driver",
+			"allow_on_submit": 1,
+		},
+		{
+			"fieldname": "custom_final_customer_feedback_document",
+			"fieldtype": "Attach",
+			"label": "Final Customer Feedback Document",
+			"insert_after": "custom_note",
+			"allow_on_submit": 1,
+		},
+		{
+			"fieldname": "transport_dispatch_address_column",
+			"fieldtype": "Column Break",
+			"insert_after": "custom_final_customer_feedback_document",
+		},
+		{
+			"fieldname": "transport_address",
+			"fieldtype": "Small Text",
+			"label": "Transport Address",
+			"insert_after": "transport_dispatch_address_column",
 		},
 		{
 			"fieldname": "custom_reschedule_transport_order",
@@ -371,18 +376,36 @@ def ensure_sales_order_field_layout():
 		name = f"Sales Order-{field['fieldname']}"
 		insert_after = field.get("insert_after")
 		if frappe.db.exists("Custom Field", name):
+			updates = {}
 			if frappe.db.get_value("Custom Field", name, "insert_after") != insert_after:
-				frappe.db.set_value(
-					"Custom Field",
-					name,
-					"insert_after",
-					insert_after,
-					update_modified=False,
-				)
+				updates["insert_after"] = insert_after
+			if field["fieldname"] == "transport_address" and frappe.db.get_value(
+				"Custom Field", name, "fieldtype"
+			) != "Small Text":
+				updates["fieldtype"] = "Small Text"
+			if updates:
+				frappe.db.set_value("Custom Field", name, updates, update_modified=False)
 		else:
 			create_custom_field("Sales Order", field)
 
-	# Keep Transport Charge on the right column when the field already exists.
+	# A site-specific Zone link sits on the customer column, ahead of the first break.
+	if frappe.db.exists("Custom Field", "Sales Order-custom_zone_"):
+		frappe.db.set_value(
+			"Custom Field",
+			"Sales Order-custom_zone_",
+			"insert_after",
+			"transport_email",
+			update_modified=False,
+		)
+		frappe.db.set_value(
+			"Custom Field",
+			"Sales Order-transport_dispatch_column",
+			"insert_after",
+			"custom_zone_",
+			update_modified=False,
+		)
+
+	# Keep Transport Charge in the address column, then start the invoice section.
 	if frappe.db.exists("Custom Field", "Sales Order-transport_charge"):
 		frappe.db.set_value(
 			"Custom Field",
@@ -391,9 +414,15 @@ def ensure_sales_order_field_layout():
 			"custom_reason_for_reschedule",
 			update_modified=False,
 		)
+		frappe.db.set_value(
+			"Custom Field",
+			"Sales Order-transport_charge_order_section",
+			"insert_after",
+			"transport_charge",
+			update_modified=False,
+		)
 
-	# Local-only column break. Our transport_dispatch_column replaces it.
-	# Leaving both would split the section into three columns.
+	# Local-only column break. The two dispatch breaks above are the layout.
 	if frappe.db.exists("Custom Field", "Sales Order-custom_column_break_xatuh"):
 		frappe.delete_doc(
 			"Custom Field",
