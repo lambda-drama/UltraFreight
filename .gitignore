@@ -35,6 +35,10 @@ venv.bak/
 # Dependency directories
 node_modules/
 jspm_packages/
+# Frappe Cloud / bench may create a lockfile at the app root; the portal lockfile lives in frontend/
+/yarn.lock
+frontend/.next/
+frontend/out/
 
 # IDEs and editors
 .vscode/
