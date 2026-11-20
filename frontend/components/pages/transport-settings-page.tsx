@@ -139,7 +139,7 @@ export default function TransportSettingsPage() {
 
   async function handleSyncDraftPrices() {
     const confirmed = window.confirm(
-      'Set the transport charge on every draft transport sales order to the amount on its address zone? Submitted orders are left unchanged.'
+      'Set each draft transport sales order to its address zone rate (per 1 UOM) and quantity from the linked delivery note / goods sales order? Totals become rate × qty. Submitted orders are left unchanged.'
     )
     if (!confirmed) return
 
@@ -452,8 +452,9 @@ export default function TransportSettingsPage() {
         <section className="mt-6 space-y-3 rounded-2xl border border-border bg-card p-5">
           <h2 className="text-sm font-semibold">Draft transport prices</h2>
           <p className="text-sm text-muted-foreground">
-            Copy each address zone amount onto every draft transport sales order. Orders that are
-            already submitted are left unchanged. Orders with no zone, or a zone with no amount, are
+            Copy each address zone rate (per 1 UOM) onto every draft transport sales order and set
+            quantity from the linked delivery note or goods sales order so the total is rate × qty.
+            Submitted orders are left unchanged. Orders with no zone, or a zone with no amount, are
             skipped.
           </p>
           <Button type="button" variant="outline" onClick={() => void handleSyncDraftPrices()} disabled={syncingPrices || saving}>

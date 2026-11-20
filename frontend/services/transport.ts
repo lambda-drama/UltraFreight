@@ -293,6 +293,7 @@ export interface LinkableDeliveryNoteOption {
   docstatus?: number
   transport_sales_order?: string
   posting_date?: string
+  total_qty?: number
   custom_delivery_note_no?: string
   already_linked?: boolean
   label?: string

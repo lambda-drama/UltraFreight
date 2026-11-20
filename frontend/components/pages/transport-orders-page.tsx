@@ -444,6 +444,10 @@ export default function TransportOrdersPage() {
     if (row.transport_phone) setCreateFinalPhone(row.transport_phone)
     if (row.transport_email) setCreateFinalEmail(row.transport_email || '')
     if (row.transport_address) setCreateFinalAddress(row.transport_address || '')
+    // Zone rate is per 1 UOM of the goods DN — prefill billable qty from DN total.
+    if (Number(row.total_qty || 0) > 0) {
+      setCreateQty(String(row.total_qty))
+    }
   }
 
   function applyTransportCustomerSelection(value: string, target: 'create' | 'edit' = 'create') {
@@ -2071,15 +2075,18 @@ export default function TransportOrdersPage() {
               />
             </div>
             <div>
-              <Label>Qty</Label>
+              <Label>Qty (goods UOM)</Label>
               <Input
                 type="number"
-                min="1"
-                step="1"
+                min="0.001"
+                step="any"
                 value={createQty}
                 onChange={(e) => setCreateQty(e.target.value)}
                 disabled={creating}
               />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Zone rate is per 1 UOM. Linked delivery notes fill this from the note total.
+              </p>
             </div>
           </div>
           <div>

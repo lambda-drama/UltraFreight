@@ -191,7 +191,15 @@ def create_transport_sales_order(delivery_note_name: str) -> str:
 	if so.meta.has_field("transport_charge") and transport_charge:
 		so.transport_charge = transport_charge
 
-	_append_transport_service_item(so, transport_item, transport_charge, doc.name, original_goods_order)
+	line_qty = get_goods_qty_for_transport(delivery_note=doc.name, sales_order=original_goods_order) or 1
+	_append_transport_service_item(
+		so,
+		transport_item,
+		transport_charge,
+		doc.name,
+		original_goods_order,
+		qty=line_qty,
+	)
 	_apply_transport_taxes(so, taxes_and_charges, company)
 
 	so.flags.creating_transport_sales_order = True
@@ -402,7 +410,13 @@ def create_standalone_transport_sales_order(
 		)
 	else:
 		transport_charge = flt(rate) if rate is not None else flt(settings.get("default_transport_charges"))
-	line_qty = flt(qty) or 1
+
+	# Zone rate is per 1 UOM of the goods DN/SO — prefer that qty when a DN is linked.
+	goods_qty = get_goods_qty_for_transport(delivery_note=delivery_note, sales_order=goods_order)
+	if goods_qty:
+		line_qty = goods_qty
+	else:
+		line_qty = flt(qty) or 1
 	taxes_and_charges = settings.get("default_sales_taxes_template")
 
 	so = frappe.new_doc("Sales Order")
@@ -1065,6 +1079,46 @@ def _get_linked_sales_order(doc) -> str | None:
 	for item in doc.items:
 		if item.against_sales_order:
 			return item.against_sales_order
+	return None
+
+
+def _sum_child_qty(doctype: str, parent: str) -> float:
+	rows = frappe.get_all(
+		f"{doctype} Item",
+		filters={"parent": parent},
+		fields=["qty"],
+		limit=0,
+	)
+	return flt(sum(flt(row.qty) for row in rows))
+
+
+def get_goods_qty_for_transport(
+	delivery_note: str | None = None,
+	sales_order: str | None = None,
+) -> float | None:
+	"""Qty of goods being transported.
+
+	Address Zone ``transport_charges`` is a per-1-UOM rate, so the transport Sales
+	Order line qty must match the Delivery Note (preferred) or goods Sales Order
+	total qty — e.g. 80 bags of cement → qty 80 on the transport charge line.
+	"""
+	delivery_note = (delivery_note or "").strip() or None
+	sales_order = (sales_order or "").strip() or None
+
+	if delivery_note and frappe.db.exists("Delivery Note", delivery_note):
+		total = flt(frappe.db.get_value("Delivery Note", delivery_note, "total_qty"))
+		if not total:
+			total = _sum_child_qty("Delivery Note", delivery_note)
+		if total:
+			return total
+
+	if sales_order and frappe.db.exists("Sales Order", sales_order):
+		total = flt(frappe.db.get_value("Sales Order", sales_order, "total_qty"))
+		if not total:
+			total = _sum_child_qty("Sales Order", sales_order)
+		if total:
+			return total
+
 	return None
 
 

@@ -1,7 +1,10 @@
 """Keep draft transport Sales Order prices in sync with Address Zone amounts.
 
-A transport order is billed from a single transport service line, and that line's
-rate comes from the ``Address Zone`` master (``transport_charges``).
+A transport order is billed from a single transport service line. That line's
+**rate** comes from the ``Address Zone`` master (``transport_charges``) and is
+per 1 UOM of the goods being delivered. The line **qty** comes from the linked
+Delivery Note (or goods Sales Order) total qty — e.g. 80 bags → qty 80, so the
+order total is zone rate × 80.
 
 Three flows use this module:
 
@@ -11,8 +14,9 @@ Three flows use this module:
 * saving an ``Address Zone`` with a new amount re-prices every draft transport
   order that follows that zone (``sync_draft_transport_orders_on_zone_update``);
 * **Update Draft Transport Prices** on Transport Settings re-prices every draft
-  transport order from its current zone amount, including older orders that were
-  never touched by a later zone change.
+  transport order from its current zone amount and refreshes qty from the linked
+  Delivery Note / goods Sales Order, including older orders that were never
+  touched by a later zone change.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from frappe.utils import cint, flt
 
 from ultrafreight.ultra_freight.api.transport_dispatch import (
 	get_default_zone_for_transport_customer,
+	get_goods_qty_for_transport,
 )
 from ultrafreight.ultra_freight.utils.transport_settings import get_transport_settings
 from ultrafreight.ultra_freight.utils.zone_field import (
@@ -102,6 +107,23 @@ def _get_transport_rows(doc) -> list:
 		if matched:
 			return matched
 	return rows
+
+
+def _goods_sales_order_for_delivery_note(delivery_note: str | None) -> str | None:
+	if not delivery_note:
+		return None
+	return frappe.db.get_value(
+		"Delivery Note Item",
+		{"parent": delivery_note, "against_sales_order": ("is", "set")},
+		"against_sales_order",
+	)
+
+
+def resolve_transport_order_goods_qty(order) -> float | None:
+	"""Goods qty that should bill on this transport order (DN first, then goods SO)."""
+	delivery_note = order.get("custom_delivery_note_to_be_transported")
+	goods_order = _goods_sales_order_for_delivery_note(delivery_note)
+	return get_goods_qty_for_transport(delivery_note=delivery_note, sales_order=goods_order)
 
 
 def _parse_names(names) -> list[str]:
@@ -239,14 +261,17 @@ def _build_preview(search: str | None = None, limit: int = 200) -> dict:
 			transport_customer,
 		)
 
-		qty = sum(flt(row.qty) for row in transport_rows)
+		current_qty = sum(flt(row.qty) for row in transport_rows)
 		current_amount = sum(flt(row.amount) for row in transport_rows)
 		rates = {flt(row.rate) for row in transport_rows}
 		current_rate = next(iter(rates)) if len(rates) == 1 else None
 
+		goods_qty = resolve_transport_order_goods_qty(order)
+		billable_qty = goods_qty if goods_qty else current_qty
+
 		zone_amount = zone_amounts.get(zone) if zone else None
 		new_rate = zone_amount or None
-		new_amount = flt(qty) * new_rate if new_rate else None
+		new_amount = flt(billable_qty) * new_rate if new_rate else None
 
 		rows.append(
 			{
@@ -260,7 +285,9 @@ def _build_preview(search: str | None = None, limit: int = 200) -> dict:
 				"delivery_note": order.get("custom_delivery_note_to_be_transported"),
 				"zone": zone,
 				"zone_source": zone_source,
-				"qty": qty,
+				"qty": current_qty,
+				"goods_qty": goods_qty,
+				"new_qty": billable_qty,
 				"current_rate": current_rate,
 				"current_amount": current_amount,
 				"zone_amount": zone_amount,
@@ -303,7 +330,11 @@ def sync_transport_order_price(
 	amount: float | None = None,
 	stamp_zone: bool = False,
 ) -> dict:
-	"""Copy an Address Zone amount onto a draft transport order.
+	"""Copy an Address Zone rate (and goods qty) onto a draft transport order.
+
+	Zone ``transport_charges`` is the per-1-UOM rate. When the order links a
+	Delivery Note / goods Sales Order, qty is refreshed from that document so
+	the line total becomes rate × goods qty.
 
 	Returns a result dict: ``status`` is either ``updated`` or ``skipped``.
 	"""
@@ -333,25 +364,40 @@ def sync_transport_order_price(
 	if not rows:
 		return _skipped(name, _("No transport charge line found"))
 
+	goods_qty = resolve_transport_order_goods_qty(doc)
 	old_rate = flt(rows[0].rate)
+	old_qty = flt(rows[0].qty)
 	old_total = flt(doc.grand_total)
 
 	zone_fields = get_zone_fields()
 	stamp = bool(zone_fields and stamp_zone and get_order_zone(doc) != zone)
+	def _target_qty(index: int, current_qty: float) -> float:
+		if not goods_qty:
+			return flt(current_qty)
+		# Bill the full goods qty on the first transport line only.
+		return flt(goods_qty) if index == 0 else 0.0
+
+	qty_changed = any(
+		flt(row.qty) != _target_qty(index, row.qty) for index, row in enumerate(rows)
+	)
 	price_changed = any(
-		flt(row.rate) != amount or flt(row.amount) != flt(row.qty) * amount for row in rows
+		flt(row.rate) != amount
+		or flt(row.amount) != _target_qty(index, row.qty) * amount
+		for index, row in enumerate(rows)
 	)
 	charge_changed = bool(
 		doc.meta.has_field("transport_charge") and flt(doc.get("transport_charge")) != amount
 	)
 
-	if not (price_changed or stamp or charge_changed):
+	if not (price_changed or qty_changed or stamp or charge_changed):
 		return {
 			"name": doc.name,
 			"status": "unchanged",
 			"zone": zone,
 			"old_rate": old_rate,
 			"new_rate": amount,
+			"old_qty": old_qty,
+			"new_qty": goods_qty or old_qty,
 			"old_total": old_total,
 			"new_total": old_total,
 			"currency": doc.currency,
@@ -361,7 +407,8 @@ def sync_transport_order_price(
 	save_point = "ultrafreight_zone_price_sync"
 	frappe.db.savepoint(save_point)
 	try:
-		for row in rows:
+		for index, row in enumerate(rows):
+			row.qty = _target_qty(index, row.qty)
 			row.rate = amount
 			if row.meta.has_field("price_list_rate"):
 				row.price_list_rate = amount
@@ -390,6 +437,8 @@ def sync_transport_order_price(
 		"zone": zone,
 		"old_rate": old_rate,
 		"new_rate": amount,
+		"old_qty": old_qty,
+		"new_qty": flt(rows[0].qty),
 		"old_total": old_total,
 		"new_total": flt(doc.grand_total),
 		"currency": doc.currency,
@@ -496,7 +545,7 @@ def sync_all_draft_transport_order_prices():
 
 	frappe.msgprint(
 		_(
-			"Checked {0} draft transport order(s). Updated {1}, already matching {2}, skipped {3}."
+			"Checked {0} draft transport order(s). Updated {1} (zone rate × goods qty), already matching {2}, skipped {3}."
 		).format(
 			summary["total"],
 			summary["total_updated"],

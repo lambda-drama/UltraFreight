@@ -10,7 +10,7 @@ frappe.ui.form.on("Transport Settings", {
 		frm.add_custom_button(__("Update Draft Transport Prices"), () => {
 			frappe.confirm(
 				__(
-					"Set the transport charge on every draft transport Sales Order to the amount on its Address Zone? Submitted orders are left unchanged."
+					"Set each draft transport Sales Order to its Address Zone rate (per 1 UOM) and quantity from the linked Delivery Note / goods Sales Order? Totals become rate × qty. Submitted orders are left unchanged."
 				),
 				() => {
 					frappe.call({

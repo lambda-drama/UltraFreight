@@ -752,6 +752,7 @@ def search_linkable_delivery_notes(search: str = "", limit: int = 20):
 		"docstatus",
 		"transport_sales_order",
 		"posting_date",
+		"total_qty",
 	]
 	dn_meta = frappe.get_meta("Delivery Note")
 	if dn_meta.has_field("custom_delivery_note_no"):
@@ -797,6 +798,8 @@ def search_linkable_delivery_notes(search: str = "", limit: int = 20):
 			parts.append(row.transport_customer_name)
 		if row.get("custom_delivery_note_no"):
 			parts.append(f"#{row.custom_delivery_note_no}")
+		if flt(row.get("total_qty")):
+			parts.append(f"qty {flt(row.total_qty):g}")
 		row["label"] = " · ".join(part for part in parts if part)
 
 	return rows
