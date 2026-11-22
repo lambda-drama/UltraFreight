@@ -2320,7 +2320,8 @@ SETTINGS_LINK_SEARCH = {
 	"Company": ["name"],
 	"Item": ["name", "item_name"],
 	"Sales Taxes and Charges Template": ["name"],
-	"Branch": ["name"],
+	"Tax Category": ["name", "title"],
+	"Branch": ["name", "branch"],
 	"Cost Center": ["name", "cost_center_name"],
 	"Print Format": ["name"],
 	"Letter Head": ["name"],
@@ -2406,9 +2407,7 @@ def search_settings_link_options(doctype: str, search: str = "", limit: int = 20
 			fields.append(field)
 
 	filters = {}
-	if doctype == "Item" and meta.has_field("disabled"):
-		filters["disabled"] = 0
-	if doctype == "Cost Center" and meta.has_field("disabled"):
+	if doctype in ("Item", "Cost Center", "Tax Category") and meta.has_field("disabled"):
 		filters["disabled"] = 0
 	if doctype == "Print Format" and meta.has_field("doc_type"):
 		# Prefer Sales Order / Sales Invoice formats but allow blank search across all

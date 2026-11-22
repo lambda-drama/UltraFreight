@@ -201,6 +201,8 @@ def create_transport_sales_order(delivery_note_name: str) -> str:
 		qty=line_qty,
 	)
 	_apply_transport_taxes(so, taxes_and_charges, company)
+	_apply_transport_accounting_dimensions(so, settings)
+	_ensure_transport_branch(so, settings)
 
 	so.flags.creating_transport_sales_order = True
 	so.flags.ignore_pricing_rule = True
@@ -446,6 +448,8 @@ def create_standalone_transport_sales_order(
 		qty=line_qty,
 	)
 	_apply_transport_taxes(so, taxes_and_charges, company)
+	_apply_transport_accounting_dimensions(so, settings)
+	_ensure_transport_branch(so, settings)
 
 	so.flags.creating_transport_sales_order = True
 	so.flags.ignore_pricing_rule = True
@@ -741,11 +745,19 @@ def _get_or_create_transport_delivery_note(
 	return dn.name
 
 
-def _apply_transport_accounting_dimensions(doc, settings: dict | None = None):
-	"""Copy Branch / Cost Center from Transport Settings onto the invoice (and items) when set."""
+def _apply_transport_accounting_dimensions(
+	doc,
+	settings: dict | None = None,
+	*,
+	branch: str | None = None,
+	cost_center: str | None = None,
+):
+	"""Copy Branch / Cost Center onto a transport Sales Order / DN / invoice (and items)."""
 	settings = settings or get_transport_settings()
-	branch = settings.get("branch")
-	cost_center = settings.get("cost_center")
+	branch = (branch if branch is not None else settings.get("branch") or "").strip() or None
+	cost_center = (
+		cost_center if cost_center is not None else settings.get("cost_center") or ""
+	).strip() or None
 	if not branch and not cost_center:
 		return
 
@@ -761,6 +773,25 @@ def _apply_transport_accounting_dimensions(doc, settings: dict | None = None):
 			item.set("branch", branch)
 		if cost_center and item_meta.has_field("cost_center"):
 			item.set("cost_center", cost_center)
+
+
+apply_transport_accounting_dimensions = _apply_transport_accounting_dimensions
+
+
+def _ensure_transport_branch(doc, settings: dict | None = None):
+	"""Branch is mandatory in many sites — require Transport Settings.branch when the SO field is required."""
+	if not doc.meta.has_field("branch"):
+		return
+	if doc.get("branch"):
+		return
+	settings = settings or get_transport_settings()
+	df = doc.meta.get_field("branch")
+	if df and cint(df.reqd):
+		frappe.throw(
+			_(
+				"Set Branch in Transport Settings. Branch is mandatory on transport Sales Orders."
+			)
+		)
 
 
 def setup_delivery_note_otp(delivery_note_name: str) -> str:

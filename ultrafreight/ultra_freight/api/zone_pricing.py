@@ -24,10 +24,13 @@ from __future__ import annotations
 import json
 
 import frappe
+from erpnext.accounts.party import set_taxes as resolve_sales_tax_template
+from erpnext.controllers.accounts_controller import get_taxes_and_charges
 from frappe import _
 from frappe.utils import cint, flt
 
 from ultrafreight.ultra_freight.api.transport_dispatch import (
+	apply_transport_accounting_dimensions,
 	get_default_zone_for_transport_customer,
 	get_goods_qty_for_transport,
 )
@@ -607,4 +610,335 @@ def sync_draft_transport_orders_on_zone_update(doc, method=None):
 		)
 
 	return len(updated)
+
+
+def _resolve_tax_template_for_order(doc, tax_category: str) -> str | None:
+	"""Pick a Sales Taxes template for this order + tax category."""
+	template = None
+	try:
+		template = resolve_sales_tax_template(
+			doc.customer,
+			"Customer",
+			doc.transaction_date or frappe.utils.today(),
+			doc.company,
+			customer_group=doc.get("customer_group"),
+			tax_category=tax_category,
+			billing_address=doc.get("customer_address"),
+			shipping_address=doc.get("shipping_address_name"),
+		)
+	except Exception:
+		frappe.log_error(
+			title="Transport tax category template resolve failed",
+			message=f"Sales Order: {doc.name}\nTax Category: {tax_category}\n{frappe.get_traceback()}",
+		)
+
+	if template and frappe.db.exists("Sales Taxes and Charges Template", template):
+		return template
+
+	filters = {"company": doc.company, "tax_category": tax_category}
+	meta = frappe.get_meta("Sales Taxes and Charges Template")
+	if meta.has_field("disabled"):
+		filters["disabled"] = 0
+	return frappe.db.get_value(
+		"Sales Taxes and Charges Template",
+		filters,
+		"name",
+		order_by="is_default desc, modified desc",
+	)
+
+
+def sync_transport_order_tax_category(name: str, tax_category: str) -> dict:
+	"""Set Tax Category on a draft transport Sales Order (and refresh taxes when possible)."""
+	if not frappe.db.exists("Sales Order", name):
+		return _skipped(name, _("Sales Order not found"))
+	if not frappe.has_permission("Sales Order", "write", doc=name):
+		return _skipped(name, _("You do not have permission to update this order"))
+
+	doc = frappe.get_doc("Sales Order", name)
+	if doc.docstatus != 0:
+		return _skipped(name, _("Only draft orders can be updated"))
+	if not doc.get("custom_is_transport_order"):
+		return _skipped(name, _("This is not a transport order"))
+
+	old_category = doc.get("tax_category") or ""
+	old_template = doc.get("taxes_and_charges") or ""
+	template = _resolve_tax_template_for_order(doc, tax_category)
+
+	category_same = old_category == tax_category
+	template_same = (not template) or (old_template == template)
+	if category_same and template_same:
+		return {
+			"name": doc.name,
+			"status": "unchanged",
+			"tax_category": tax_category,
+			"taxes_and_charges": old_template or None,
+			"reason": _("Tax category already matches"),
+		}
+
+	save_point = "ultrafreight_tax_category_sync"
+	frappe.db.savepoint(save_point)
+	try:
+		doc.tax_category = tax_category
+		if template:
+			doc.set("taxes", [])
+			doc.taxes_and_charges = template
+			for tax in get_taxes_and_charges("Sales Taxes and Charges Template", template):
+				doc.append("taxes", tax)
+
+		doc.flags.ignore_pricing_rule = True
+		doc.run_method("calculate_taxes_and_totals")
+		doc.save(ignore_permissions=True)
+	except Exception:
+		frappe.db.rollback(save_point=save_point)
+		frappe.log_error(
+			title="Transport tax category sync failed",
+			message=f"Sales Order: {name}\nTax Category: {tax_category}\n{frappe.get_traceback()}",
+		)
+		return _skipped(name, _("Could not update this order — see Error Log"))
+
+	return {
+		"name": doc.name,
+		"status": "updated",
+		"old_tax_category": old_category or None,
+		"tax_category": tax_category,
+		"old_taxes_and_charges": old_template or None,
+		"taxes_and_charges": doc.get("taxes_and_charges") or None,
+	}
+
+
+def apply_tax_category_to_draft_transport_orders(tax_category: str) -> dict:
+	"""Apply a Tax Category to every draft transport Sales Order."""
+	names = _draft_transport_order_names()
+	updated, unchanged, skipped = [], [], []
+
+	frappe.flags[SYNC_FLAG] = True
+	try:
+		total = len(names)
+		for index, name in enumerate(names, start=1):
+			result = sync_transport_order_tax_category(name, tax_category)
+			status = result.get("status")
+			if status == "updated":
+				updated.append(
+					{
+						"name": result["name"],
+						"tax_category": result.get("tax_category"),
+						"taxes_and_charges": result.get("taxes_and_charges"),
+					}
+				)
+			elif status == "unchanged":
+				unchanged.append(result["name"])
+			else:
+				skipped.append({"name": result.get("name") or name, "reason": result.get("reason")})
+
+			if total and index % 10 == 0:
+				frappe.publish_progress(
+					index / total * 100,
+					title=_("Updating draft tax categories"),
+					description=_("{0} of {1}").format(index, total),
+				)
+			if not frappe.flags.in_test and index % 25 == 0:
+				frappe.db.commit()
+	finally:
+		frappe.flags[SYNC_FLAG] = False
+
+	return {
+		"total": len(names),
+		"total_updated": len(updated),
+		"total_unchanged": len(unchanged),
+		"total_skipped": len(skipped),
+		"tax_category": tax_category,
+		"updated": updated,
+		"skipped": skipped,
+	}
+
+
+@frappe.whitelist()
+def sync_all_draft_transport_order_tax_categories(tax_category: str | None = None):
+	"""Set Tax Category on every draft transport Sales Order."""
+	_require_bulk_zone_price_sync()
+	tax_category = (tax_category or "").strip()
+	if not tax_category:
+		frappe.throw(_("Select a Tax Category"))
+	if not frappe.db.exists("Tax Category", tax_category):
+		frappe.throw(_("Tax Category {0} was not found").format(tax_category))
+
+	summary = apply_tax_category_to_draft_transport_orders(tax_category)
+
+	frappe.msgprint(
+		_(
+			"Checked {0} draft transport order(s). Set tax category {1} on {2}, already matching {3}, skipped {4}."
+		).format(
+			summary["total"],
+			tax_category,
+			summary["total_updated"],
+			summary["total_unchanged"],
+			summary["total_skipped"],
+		),
+		title=_("Draft Transport Tax Category"),
+		indicator="green" if summary["total_updated"] else "blue",
+	)
+	return summary
+
+
+def sync_transport_order_branch(
+	name: str,
+	branch: str,
+	cost_center: str | None = None,
+) -> dict:
+	"""Set Branch (and optional Cost Center) on a draft transport Sales Order."""
+	if not frappe.db.exists("Sales Order", name):
+		return _skipped(name, _("Sales Order not found"))
+	if not frappe.has_permission("Sales Order", "write", doc=name):
+		return _skipped(name, _("You do not have permission to update this order"))
+
+	doc = frappe.get_doc("Sales Order", name)
+	if doc.docstatus != 0:
+		return _skipped(name, _("Only draft orders can be updated"))
+	if not doc.get("custom_is_transport_order"):
+		return _skipped(name, _("This is not a transport order"))
+	if not doc.meta.has_field("branch"):
+		return _skipped(name, _("Sales Order has no Branch field"))
+
+	old_branch = doc.get("branch") or ""
+	old_cost_center = doc.get("cost_center") or "" if doc.meta.has_field("cost_center") else ""
+	cost_center = (cost_center or "").strip() or None
+
+	branch_same = old_branch == branch
+	cost_center_same = True
+	if cost_center is not None and doc.meta.has_field("cost_center"):
+		cost_center_same = old_cost_center == cost_center
+	items_need_branch = any(
+		frappe.get_meta(row.doctype).has_field("branch") and (row.get("branch") or "") != branch
+		for row in (doc.items or [])
+	)
+
+	if branch_same and cost_center_same and not items_need_branch:
+		return {
+			"name": doc.name,
+			"status": "unchanged",
+			"branch": branch,
+			"cost_center": old_cost_center or None,
+			"reason": _("Branch already matches"),
+		}
+
+	save_point = "ultrafreight_branch_sync"
+	frappe.db.savepoint(save_point)
+	try:
+		apply_transport_accounting_dimensions(
+			doc,
+			branch=branch,
+			cost_center=cost_center if cost_center is not None else (doc.get("cost_center") or None),
+		)
+		doc.flags.ignore_pricing_rule = True
+		doc.save(ignore_permissions=True)
+	except Exception:
+		frappe.db.rollback(save_point=save_point)
+		frappe.log_error(
+			title="Transport branch sync failed",
+			message=f"Sales Order: {name}\nBranch: {branch}\n{frappe.get_traceback()}",
+		)
+		return _skipped(name, _("Could not update this order — see Error Log"))
+
+	return {
+		"name": doc.name,
+		"status": "updated",
+		"old_branch": old_branch or None,
+		"branch": branch,
+		"old_cost_center": old_cost_center or None,
+		"cost_center": doc.get("cost_center") if doc.meta.has_field("cost_center") else None,
+	}
+
+
+def apply_branch_to_draft_transport_orders(
+	branch: str,
+	cost_center: str | None = None,
+) -> dict:
+	"""Apply Branch (and optional Cost Center) to every draft transport Sales Order."""
+	names = _draft_transport_order_names()
+	updated, unchanged, skipped = [], [], []
+
+	frappe.flags[SYNC_FLAG] = True
+	try:
+		total = len(names)
+		for index, name in enumerate(names, start=1):
+			result = sync_transport_order_branch(name, branch, cost_center=cost_center)
+			status = result.get("status")
+			if status == "updated":
+				updated.append(
+					{
+						"name": result["name"],
+						"branch": result.get("branch"),
+						"cost_center": result.get("cost_center"),
+					}
+				)
+			elif status == "unchanged":
+				unchanged.append(result["name"])
+			else:
+				skipped.append({"name": result.get("name") or name, "reason": result.get("reason")})
+
+			if total and index % 10 == 0:
+				frappe.publish_progress(
+					index / total * 100,
+					title=_("Updating draft branches"),
+					description=_("{0} of {1}").format(index, total),
+				)
+			if not frappe.flags.in_test and index % 25 == 0:
+				frappe.db.commit()
+	finally:
+		frappe.flags[SYNC_FLAG] = False
+
+	return {
+		"total": len(names),
+		"total_updated": len(updated),
+		"total_unchanged": len(unchanged),
+		"total_skipped": len(skipped),
+		"branch": branch,
+		"cost_center": cost_center,
+		"updated": updated,
+		"skipped": skipped,
+	}
+
+
+@frappe.whitelist()
+def sync_all_draft_transport_order_branches(
+	branch: str | None = None,
+	cost_center: str | None = None,
+	use_settings_defaults: int | bool | None = 0,
+):
+	"""Set Branch on every draft transport Sales Order."""
+	_require_bulk_zone_price_sync()
+
+	settings = get_transport_settings()
+	use_defaults = cint(use_settings_defaults)
+	branch = (branch or "").strip()
+	cost_center = (cost_center or "").strip() or None
+
+	if use_defaults or not branch:
+		branch = branch or (settings.get("branch") or "").strip()
+		if not cost_center:
+			cost_center = (settings.get("cost_center") or "").strip() or None
+
+	if not branch:
+		frappe.throw(_("Select a Branch (or set Branch in Transport Settings)"))
+	if not frappe.db.exists("Branch", branch):
+		frappe.throw(_("Branch {0} was not found").format(branch))
+	if cost_center and not frappe.db.exists("Cost Center", cost_center):
+		frappe.throw(_("Cost Center {0} was not found").format(cost_center))
+
+	summary = apply_branch_to_draft_transport_orders(branch, cost_center=cost_center)
+
+	frappe.msgprint(
+		_(
+			"Checked {0} draft transport order(s). Set branch {1} on {2}, already matching {3}, skipped {4}."
+		).format(
+			summary["total"],
+			branch,
+			summary["total_updated"],
+			summary["total_unchanged"],
+			summary["total_skipped"],
+		),
+		title=_("Draft Transport Branch"),
+		indicator="green" if summary["total_updated"] else "blue",
+	)
+	return summary
 

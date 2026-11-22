@@ -6,13 +6,15 @@ import { toast } from 'sonner'
 import {
   getPortalTransportSettings,
   searchSettingsLinkOptions,
+  syncAllDraftTransportBranches,
   syncAllDraftTransportPrices,
+  syncAllDraftTransportTaxCategories,
   updatePortalTransportSettings,
   type TransportSettingsPayload,
 } from '@/services/transport'
 import { useAuth } from '@/contexts/auth-context'
 import { useNavigation } from '@/contexts/navigation-context'
-import { Button, Input, Label, Select } from '@/components/ui/primitives'
+import { Button, Input, Label, Modal, Select } from '@/components/ui/primitives'
 import { SearchCombobox } from '@/components/ui/search-combobox'
 import { Loader2, Save, ShieldAlert } from 'lucide-react'
 
@@ -107,6 +109,14 @@ export default function TransportSettingsPage() {
   const [form, setForm] = useState<TransportSettingsPayload>(emptyForm)
   const [saving, setSaving] = useState(false)
   const [syncingPrices, setSyncingPrices] = useState(false)
+  const [taxCategoryModalOpen, setTaxCategoryModalOpen] = useState(false)
+  const [taxCategory, setTaxCategory] = useState('')
+  const [syncingTaxCategory, setSyncingTaxCategory] = useState(false)
+  const [branchModalOpen, setBranchModalOpen] = useState(false)
+  const [draftBranch, setDraftBranch] = useState('')
+  const [draftCostCenter, setDraftCostCenter] = useState('')
+  const [syncingBranch, setSyncingBranch] = useState(false)
+  const draftBusy = syncingPrices || syncingTaxCategory || syncingBranch
 
   useEffect(() => {
     if (data) {
@@ -157,6 +167,69 @@ export default function TransportSettingsPage() {
       toast.error(err instanceof Error ? err.message : 'Could not update draft transport prices')
     } finally {
       setSyncingPrices(false)
+    }
+  }
+
+  function openTaxCategoryModal() {
+    setTaxCategory('')
+    setTaxCategoryModalOpen(true)
+  }
+
+  function openBranchModal() {
+    setDraftBranch(form.branch || '')
+    setDraftCostCenter(form.cost_center || '')
+    setBranchModalOpen(true)
+  }
+
+  async function handleSyncDraftTaxCategory(e: React.FormEvent) {
+    e.preventDefault()
+    if (!taxCategory.trim()) {
+      toast.error('Select a tax category')
+      return
+    }
+    setSyncingTaxCategory(true)
+    try {
+      const result = await syncAllDraftTransportTaxCategories(taxCategory.trim())
+      const skipped = (result.skipped || [])
+        .slice(0, 5)
+        .map((row) => `${row.name}: ${row.reason || 'skipped'}`)
+        .join('; ')
+      toast.success(
+        `Checked ${result.total || 0} draft transport orders. Set ${result.tax_category || taxCategory} on ${result.total_updated || 0}, already matching ${result.total_unchanged || 0}, skipped ${result.total_skipped || 0}.${skipped ? ` ${skipped}` : ''}`
+      )
+      setTaxCategoryModalOpen(false)
+      setTaxCategory('')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not update draft tax categories')
+    } finally {
+      setSyncingTaxCategory(false)
+    }
+  }
+
+  async function handleSyncDraftBranch(e: React.FormEvent) {
+    e.preventDefault()
+    if (!draftBranch.trim()) {
+      toast.error('Select a branch')
+      return
+    }
+    setSyncingBranch(true)
+    try {
+      const result = await syncAllDraftTransportBranches({
+        branch: draftBranch.trim(),
+        cost_center: draftCostCenter.trim() || undefined,
+      })
+      const skipped = (result.skipped || [])
+        .slice(0, 5)
+        .map((row) => `${row.name}: ${row.reason || 'skipped'}`)
+        .join('; ')
+      toast.success(
+        `Checked ${result.total || 0} draft transport orders. Set branch ${result.branch || draftBranch} on ${result.total_updated || 0}, already matching ${result.total_unchanged || 0}, skipped ${result.total_skipped || 0}.${skipped ? ` ${skipped}` : ''}`
+      )
+      setBranchModalOpen(false)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not update draft branches')
+    } finally {
+      setSyncingBranch(false)
     }
   }
 
@@ -440,7 +513,7 @@ export default function TransportSettingsPage() {
           </section>
 
           <div className="flex justify-end">
-            <Button type="submit" disabled={saving || syncingPrices}>
+            <Button type="submit" disabled={saving || draftBusy}>
               {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
               Save settings
             </Button>
@@ -450,19 +523,114 @@ export default function TransportSettingsPage() {
 
       {!isLoading ? (
         <section className="mt-6 space-y-3 rounded-2xl border border-border bg-card p-5">
-          <h2 className="text-sm font-semibold">Draft transport prices</h2>
+          <h2 className="text-sm font-semibold">Draft order actions</h2>
           <p className="text-sm text-muted-foreground">
-            Copy each address zone rate (per 1 UOM) onto every draft transport sales order and set
-            quantity from the linked delivery note or goods sales order so the total is rate × qty.
-            Submitted orders are left unchanged. Orders with no zone, or a zone with no amount, are
-            skipped.
+            Bulk-update every draft transport sales order. Submitted orders are left unchanged.
           </p>
-          <Button type="button" variant="outline" onClick={() => void handleSyncDraftPrices()} disabled={syncingPrices || saving}>
-            {syncingPrices ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-            Update draft transport prices
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void handleSyncDraftPrices()}
+              disabled={draftBusy || saving}
+            >
+              {syncingPrices ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Update prices
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={openTaxCategoryModal}
+              disabled={draftBusy || saving}
+            >
+              Update tax category
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={openBranchModal}
+              disabled={draftBusy || saving}
+            >
+              Update branch
+            </Button>
+          </div>
         </section>
       ) : null}
+
+      <Modal
+        open={taxCategoryModalOpen}
+        title="Update draft tax category"
+        onClose={() => !syncingTaxCategory && setTaxCategoryModalOpen(false)}
+      >
+        <form className="space-y-4" onSubmit={(e) => void handleSyncDraftTaxCategory(e)}>
+          <p className="text-sm text-muted-foreground">
+            Choose the tax category to apply to all draft transport sales orders.
+          </p>
+          <LinkField
+            label="Tax Category"
+            doctype="Tax Category"
+            value={taxCategory}
+            onChange={setTaxCategory}
+            disabled={syncingTaxCategory}
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setTaxCategoryModalOpen(false)}
+              disabled={syncingTaxCategory}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={syncingTaxCategory || !taxCategory.trim()}>
+              {syncingTaxCategory ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Update drafts
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={branchModalOpen}
+        title="Update draft branch"
+        onClose={() => !syncingBranch && setBranchModalOpen(false)}
+      >
+        <form className="space-y-4" onSubmit={(e) => void handleSyncDraftBranch(e)}>
+          <p className="text-sm text-muted-foreground">
+            Choose the branch (and optional cost center) for all draft transport sales orders.
+            Defaults are taken from Transport Settings.
+          </p>
+          <LinkField
+            label="Branch"
+            doctype="Branch"
+            value={draftBranch}
+            onChange={setDraftBranch}
+            disabled={syncingBranch}
+          />
+          <LinkField
+            label="Cost Center"
+            doctype="Cost Center"
+            value={draftCostCenter}
+            onChange={setDraftCostCenter}
+            disabled={syncingBranch}
+            hint="Optional"
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setBranchModalOpen(false)}
+              disabled={syncingBranch}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={syncingBranch || !draftBranch.trim()}>
+              {syncingBranch ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Update drafts
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   )
 }

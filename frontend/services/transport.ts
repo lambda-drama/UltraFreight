@@ -767,6 +767,50 @@ export function syncAllDraftTransportPrices() {
   )
 }
 
+export interface DraftTransportTaxCategorySyncResult {
+  total: number
+  total_updated: number
+  total_unchanged: number
+  total_skipped: number
+  tax_category?: string
+  updated: { name: string; tax_category?: string; taxes_and_charges?: string }[]
+  skipped: { name: string; reason?: string }[]
+}
+
+export function syncAllDraftTransportTaxCategories(taxCategory: string) {
+  return apiRequest<DraftTransportTaxCategorySyncResult>(
+    '/api/method/ultrafreight.ultra_freight.api.zone_pricing.sync_all_draft_transport_order_tax_categories',
+    { method: 'POST', body: JSON.stringify({ tax_category: taxCategory }) }
+  )
+}
+
+export interface DraftTransportBranchSyncResult {
+  total: number
+  total_updated: number
+  total_unchanged: number
+  total_skipped: number
+  branch?: string
+  cost_center?: string
+  updated: { name: string; branch?: string; cost_center?: string }[]
+  skipped: { name: string; reason?: string }[]
+}
+
+export function syncAllDraftTransportBranches(payload: {
+  branch: string
+  cost_center?: string
+}) {
+  return apiRequest<DraftTransportBranchSyncResult>(
+    '/api/method/ultrafreight.ultra_freight.api.zone_pricing.sync_all_draft_transport_order_branches',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        branch: payload.branch,
+        cost_center: payload.cost_center || '',
+      }),
+    }
+  )
+}
+
 export function searchSettingsLinkOptions(doctype: string, search?: string) {
   return apiRequest<{ name: string; label: string }[]>(`${API}.search_settings_link_options`, {
     method: 'POST',
